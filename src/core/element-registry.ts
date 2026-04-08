@@ -270,7 +270,8 @@ function interactivePriority(e: InteractiveElement): number {
 }
 
 // Return only the highest-priority candidates; returns original array if single element
-function prioritizeInteractive(candidates: InteractiveElement[]): InteractiveElement[] {
+/** @internal */
+export function prioritizeInteractive(candidates: InteractiveElement[]): InteractiveElement[] {
   if (candidates.length <= 1) return candidates;
   const sorted = [...candidates].sort((a, b) => interactivePriority(a) - interactivePriority(b));
   const best = interactivePriority(sorted[0]);

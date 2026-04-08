@@ -25,13 +25,18 @@ import { takeScreenshot } from "./tools/screenshot.js";
 import { evaluate } from "./tools/evaluate.js";
 import { uploadFile } from "./tools/upload-file.js";
 import { downloadFile } from "./tools/download-file.js";
+import { setViewport } from "./tools/set-viewport.js";
+import { navigateBack } from "./tools/navigate-back.js";
+import { pressKey } from "./tools/press-key.js";
+import { waitFor } from "./tools/wait-for.js";
+import { hoverElement } from "./tools/hover.js";
 import type { Services } from "./types.js";
 
 export function createMcpServer(): { server: McpServer; services: Services } {
   const server = new McpServer(
     {
       name: "smallright",
-      version: "0.2.0",
+      version: "0.3.0",
     },
     {
       instructions: `smallright — AI-Friendly Browser Automation
@@ -342,6 +347,62 @@ download_file(text) — click an element to trigger a download. Returns filename
         ),
     },
     (params) => wrap(() => evaluate(services, params))
+  );
+
+  // ── set_viewport ──
+  server.tool(
+    "set_viewport",
+    "Change the browser viewport size using a preset or explicit dimensions. Returns ActionModeState after resize.",
+    {
+      width:  z.number().optional().describe("Viewport width in pixels"),
+      height: z.number().optional().describe("Viewport height in pixels"),
+      preset: z.enum(["mobile", "tablet", "desktop"]).optional()
+        .describe("Preset: mobile(375x812), tablet(768x1024), desktop(1280x720)"),
+    },
+    (params) => wrap(() => setViewport(services, params))
+  );
+
+  // ── navigate_back ──
+  server.tool(
+    "navigate_back",
+    "Navigate back to the previous page in browser history. Returns ActionModeState of the previous page.",
+    {},
+    (_params) => wrap(() => navigateBack(services, _params as Record<string, never>))
+  );
+
+  // ── press_key ──
+  server.tool(
+    "press_key",
+    "Send a keyboard key press to the current page. Returns a StateDiff of changed zones after the action.",
+    {
+      key: z.string().describe("Key to press (e.g. Tab, Enter, Escape, ArrowDown)"),
+    },
+    (params) => wrap(() => pressKey(services, params))
+  );
+
+  // ── wait_for ──
+  server.tool(
+    "wait_for",
+    "Wait until the specified text or CSS selector becomes visible on the page. Returns ActionModeState after the element appears.",
+    {
+      text:     z.string().optional().describe("Text to wait for (visible on page)"),
+      selector: z.string().optional().describe("CSS selector to wait for"),
+      timeout:  z.number().optional().describe("Max wait time in ms (default: 10000)"),
+    },
+    (params) => wrap(() => waitFor(services, params))
+  );
+
+  // ── hover ──
+  server.tool(
+    "hover",
+    "Hover over an element identified by text. Returns a StateDiff of changed zones after the action. If multiple elements match, returns AmbiguousMatch — check candidates and re-call with the index parameter.",
+    {
+      text:  z.string().describe("Text of the element to hover"),
+      role:  z.string().optional().describe("Element role for better matching"),
+      zone:  z.string().optional().describe("Zone name to search in"),
+      index: z.number().optional().describe("Disambiguation index for AmbiguousMatch (0-based)"),
+    },
+    (params) => wrap(() => hoverElement(services, params))
   );
 
   return { server, services };

@@ -13,7 +13,8 @@ const ACTION_ROLES = new Set(["button", "link", "menuitem"]);
 const FORM_TAGS = new Set(["input", "select", "textarea"]);
 const FORM_ROLES = new Set(["textbox", "combobox", "listbox", "searchbox"]);
 
-function toPublicElement(el: InteractiveElement): PublicElement {
+/** @internal */
+export function toPublicElement(el: InteractiveElement): PublicElement {
   const { ref: _ref, selector: _sel, scanIndex: _idx, context: _ctx, ...rest } = el;
   return rest;
 }
@@ -30,7 +31,8 @@ function isFormElement(el: InteractiveElement): boolean {
   return false;
 }
 
-function classifyTextPattern(text: string | undefined): string {
+/** @internal */
+export function classifyTextPattern(text: string | undefined): string {
   if (!text || text.trim() === '') return 'repetitive';
   // Short text composed only of digits, date chars, weekday chars → repetitive
   if (text.length <= 20 && /^[\d年月日曜火水木金土\s:\/\-.]+$/.test(text)) return 'repetitive';
@@ -39,7 +41,8 @@ function classifyTextPattern(text: string | undefined): string {
 }
 
 // Collapse groups of 10+ similar elements (same tag/role/type/disabled) into summary (U3/P3)
-function collapseSimilar(elements: PublicElement[]): PublicElement[] {
+/** @internal */
+export function collapseSimilar(elements: PublicElement[]): PublicElement[] {
   if (elements.length < 10) return elements;
 
   // Group by tag + role + type + disabled + text pattern
