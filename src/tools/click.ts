@@ -60,15 +60,13 @@ export async function clickElement(
   const locator = resolveLocator(page, resolved);
   await locator.click({ timeout: 10000 });
 
-  // URL change polling (max 2s)
-  const maxWait = 2000;
-  const interval = 100;
-  let elapsed = 0;
-  while (elapsed < maxWait && page.url() === urlBefore) {
-    await page.waitForTimeout(interval);
-    elapsed += interval;
+  // Wait for navigation if it occurs (SPA pushState), but don't block if no navigation
+  try {
+    await page.waitForURL((url) => url.toString() !== urlBefore, { timeout: 2000 });
+  } catch {
+    // No navigation occurred — e.g. modal open, dropdown toggle. Continue.
   }
-  // DOM stabilization wait
+  // Brief DOM stabilization wait
   await page.waitForTimeout(300);
 
   // Re-scan and take snapshot
@@ -77,10 +75,7 @@ export async function clickElement(
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);
 
   const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
-  const responseJson = JSON.stringify(diff, null, 2);
   const dialogs = s.browser.consumeDialogMessages();
-  if (dialogs.length > 0) {
-    return JSON.stringify({ ...JSON.parse(responseJson), dialogs }, null, 2);
-  }
-  return responseJson;
+  const result = dialogs.length > 0 ? { ...diff, dialogs } : diff;
+  return JSON.stringify(result, null, 2);
 }

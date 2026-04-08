@@ -51,27 +51,28 @@ function collapseSimilar(elements: PublicElement[]): PublicElement[] {
     else { groups.set(key, { items: [el], indices: [i] }); }
   });
 
-  // Build result: keep non-collapsible elements, collapse large groups
-  const result: PublicElement[] = [];
-  const collapsed = new Set<number>();
+  // Determine which indices to collapse and where to insert summaries
+  const collapsedIndices = new Set<number>();
+  const summaryAfter = new Map<number, PublicElement>(); // insert summary after this index
   for (const [, group] of groups) {
     if (group.items.length >= 10) {
-      // Keep first 3, add summary
-      for (let j = 0; j < 3; j++) {
-        result.push(group.items[j]);
-      }
-      result.push({
+      const keepSet = new Set(group.indices.slice(0, 3));
+      group.indices.forEach(i => { if (!keepSet.has(i)) collapsedIndices.add(i); });
+      // Insert summary after the 3rd kept element
+      summaryAfter.set(group.indices[2], {
         tag: group.items[0].tag,
         text: `...and ${group.items.length - 3} more similar elements`,
         disabled: false,
       } as PublicElement);
-      group.indices.forEach(i => collapsed.add(i));
     }
   }
 
-  // Add non-collapsed elements in original order
+  // Build result preserving original order
+  const result: PublicElement[] = [];
   elements.forEach((el, i) => {
-    if (!collapsed.has(i)) result.push(el);
+    if (!collapsedIndices.has(i)) result.push(el);
+    const summary = summaryAfter.get(i);
+    if (summary) result.push(summary);
   });
 
   return result;
