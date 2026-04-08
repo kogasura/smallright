@@ -6,9 +6,14 @@ export async function evaluate(
 ): Promise<string> {
   const page = await s.browser.getPage();
 
-  // Pass the script string directly to page.evaluate
-  // eslint-disable-next-line no-new-func
-  const result = await page.evaluate(new Function(params.script) as () => unknown);
+  // Wrap the script in an async IIFE so that await can be used inside
+  const wrapped = `(async () => { ${params.script} })()`;
 
-  return JSON.stringify(result, null, 2);
+  try {
+    const result = await page.evaluate(wrapped);
+    return JSON.stringify(result ?? null, null, 2);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Script evaluation failed: ${message}\n\nProvided script:\n${params.script}`);
+  }
 }

@@ -23,13 +23,15 @@ import { runBatch } from "./tools/run-batch.js";
 import { readTable } from "./tools/read-table.js";
 import { takeScreenshot } from "./tools/screenshot.js";
 import { evaluate } from "./tools/evaluate.js";
+import { uploadFile } from "./tools/upload-file.js";
+import { downloadFile } from "./tools/download-file.js";
 import type { Services } from "./types.js";
 
 export function createMcpServer(): { server: McpServer; services: Services } {
   const server = new McpServer(
     {
       name: "smallright",
-      version: "0.1.0",
+      version: "0.2.0",
     },
     {
       instructions: `smallright — AI-Friendly Browser Automation
@@ -53,7 +55,13 @@ If multiple elements match, a candidate list is returned. Re-call with the index
 - save_profile() persists zone definitions and auto-applies them on the next visit
 
 ## Batch Execution
-run_batch(steps) executes multiple actions in a single call.`,
+run_batch(steps) executes multiple actions in a single call.
+
+## File Upload
+upload_file(paths) — set files on an input[type=file]. Identify the input by label or selector.
+
+## File Download
+download_file(text) — click an element to trigger a download. Returns filename, size, and text preview. Use save_path to persist the file.`,
     }
   );
 
@@ -294,6 +302,32 @@ run_batch(steps) executes multiple actions in a single call.`,
         .describe("JPEG quality (1-100). Default: 50. Only effective when format is jpeg."),
     },
     (params) => wrap(() => takeScreenshot(services, params))
+  );
+
+  // ── upload_file ──
+  server.tool(
+    "upload_file",
+    "Upload files to a file input element identified by label or selector.",
+    {
+      paths: z.array(z.string()).min(1).describe("Absolute file paths to upload"),
+      label: z.string().optional().describe("Label text of the file input"),
+      selector: z.string().optional().describe("CSS selector of the file input"),
+    },
+    (params) => wrap(() => uploadFile(services, params))
+  );
+
+  // ── download_file ──
+  server.tool(
+    "download_file",
+    "Click an element to trigger a file download. Returns filename, size, and a text preview for supported formats.",
+    {
+      text: z.string().describe("Text of the element that triggers the download."),
+      role: z.string().optional().describe("Element role for better matching."),
+      index: z.number().optional().describe("Disambiguation index for AmbiguousMatch."),
+      timeout: z.number().optional().describe("Max wait time for download in ms (default: 30000)."),
+      save_path: z.string().optional().describe("Save the file to this path. If omitted, the temp file is deleted after inspection."),
+    },
+    (params) => wrap(() => downloadFile(services, params))
   );
 
   // ── evaluate ──
