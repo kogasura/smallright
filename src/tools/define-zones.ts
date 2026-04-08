@@ -10,5 +10,5 @@ export async function defineZones(
     ...(z.description !== undefined ? { description: z.description } : {}),
   }));
   s.zones.setZones(zones);
-  return `ゾーン定義を更新しました。登録数: ${zones.length} ゾーン（${zones.map(z => z.name).join(', ')}）`;
+  return `Zone definitions updated. Registered ${zones.length} zone(s): ${zones.map(z => z.name).join(', ')}`;
 }

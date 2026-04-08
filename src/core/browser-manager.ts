@@ -34,7 +34,7 @@ class BrowserManagerImpl implements BrowserManager {
   async navigateTo(url: string): Promise<void> {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error(`許可されていないプロトコルです: ${parsed.protocol}`);
+      throw new Error(`Unsupported protocol: ${parsed.protocol}`);
     }
     const page = await this.getPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });

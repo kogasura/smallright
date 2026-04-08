@@ -20,7 +20,7 @@ class ElementRegistryImpl implements ElementRegistry {
       const ELEMENT_LIMIT = 500;
       const nodes = Array.from(document.querySelectorAll(selector));
 
-      // 重複排除（同一ノードが複数セレクタにマッチする場合）
+      // Deduplicate nodes that match multiple selectors
       const seen = new Set<Element>();
       const unique: Element[] = [];
       for (const node of nodes) {
@@ -34,13 +34,13 @@ class ElementRegistryImpl implements ElementRegistry {
       return unique.map((el, i) => {
         const htmlEl = el as HTMLElement;
 
-        // hidden要素の除外（offsetParent === null かつ position !== 'fixed'）
+        // Skip hidden elements (offsetParent === null and position !== 'fixed')
         const style = window.getComputedStyle(htmlEl);
         if (htmlEl.offsetParent === null && style.position !== 'fixed') {
           return null;
         }
 
-        // label 解決
+        // Resolve label text
         let labelText: string | undefined;
         const id = htmlEl.getAttribute('id');
         if (id) {
@@ -57,12 +57,12 @@ class ElementRegistryImpl implements ElementRegistry {
           }
         }
 
-        // text: aria-label 優先、なければ innerText
+        // text: prefer aria-label, fall back to innerText
         const ariaLabel = htmlEl.getAttribute('aria-label');
         const innerText = htmlEl.innerText?.trim();
         const text = ariaLabel?.trim() || innerText || '';
 
-        // input の type / value / placeholder / disabled
+        // input type / value / placeholder / disabled
         const tag = htmlEl.tagName.toLowerCase();
         const type = htmlEl.getAttribute('type') ?? undefined;
         const role = htmlEl.getAttribute('role') ?? undefined;
@@ -78,24 +78,23 @@ class ElementRegistryImpl implements ElementRegistry {
           value = (htmlEl as HTMLInputElement).value || undefined;
         }
 
-        // ユニークセレクタの生成
+        // Generate a unique selector for this element
         let selector: string;
         if (id) {
           selector = `#${CSS.escape(id)}`;
         } else {
-          // tagName + :nth-of-type でユニークなセレクタを構築
+          // Build a unique selector using tagName + :nth-of-type
           const tagName = htmlEl.tagName.toLowerCase();
           const parent = htmlEl.parentElement;
           if (parent) {
             const siblings = Array.from(parent.querySelectorAll(`:scope > ${tagName}`));
             const nthIndex = siblings.indexOf(htmlEl) + 1;
-            // 親のセレクタを再帰的に構築するのではなく、ページ全体でのインデックスを使う
+            // Rather than building a full parent path, use a data attribute for global uniqueness
             selector = `${tagName}:nth-of-type(${nthIndex})`;
           } else {
             selector = tagName;
           }
-          // グローバルにユニークでない場合は要素全体のインデックスをデータ属性として使う
-          // （インデックスをデータ属性に設定し、それで選択する）
+          // Set a data attribute on the element and use it as the selector for global uniqueness
           const dataRef = `e${i + 1}`;
           htmlEl.setAttribute('data-smallright-ref', dataRef);
           selector = `[data-smallright-ref="${dataRef}"]`;
@@ -129,7 +128,7 @@ class ElementRegistryImpl implements ElementRegistry {
     const normalized = normalize(query);
     const pool = zone ? elements.filter((e) => e.zone === zone) : elements;
 
-    // 優先順位: 完全一致 > 前方一致 > 部分一致
+    // Priority: exact match > prefix match > partial match
     const exact = pool.filter((e) => normalize(e.text) === normalized);
     const prefix = pool.filter((e) => normalize(e.text).startsWith(normalized));
     const partial = pool.filter((e) => normalize(e.text).includes(normalized));
@@ -146,7 +145,7 @@ class ElementRegistryImpl implements ElementRegistry {
   ): InteractiveElement | AmbiguousMatch | null {
     const normalized = normalize(label);
 
-    // ラベルマッチ優先順位: label フィールド > text フィールド > placeholder > name フィールド
+    // Label match priority: label field > text field > placeholder > name field
     function matchScore(e: InteractiveElement): number | null {
       if (e.label && normalize(e.label) === normalized) return 0;
       if (normalize(e.text) === normalized) return 1;
@@ -173,7 +172,7 @@ class ElementRegistryImpl implements ElementRegistry {
 
     if (scored.length === 0) return null;
 
-    // 最良スコアの候補群を取り出す
+    // Extract the best-scoring candidates
     const bestScore = scored[0].score;
     const candidates = scored.filter((x) => x.score === bestScore).map((x) => x.e);
 
@@ -181,12 +180,12 @@ class ElementRegistryImpl implements ElementRegistry {
   }
 }
 
-// テキスト正規化: 連続空白→1つ、前後トリム、小文字化
+// Normalize text: collapse whitespace, trim, and lowercase
 function normalize(text: string): string {
   return text.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-// 完全一致 > 前方一致 > 部分一致 の優先順位で最良グループを返す
+// Return the best match group: exact > prefix > partial
 function pickBestMatches(
   exact: InteractiveElement[],
   prefix: InteractiveElement[],
@@ -197,7 +196,7 @@ function pickBestMatches(
   return partial;
 }
 
-// 候補から1件 / AmbiguousMatch / null を返す
+// Return a single element, AmbiguousMatch, or null from candidates
 function resolveFromCandidates(
   query: string,
   candidates: InteractiveElement[],
@@ -212,7 +211,7 @@ function resolveFromCandidates(
 
   if (candidates.length === 1) return candidates[0];
 
-  // 複数候補 → AmbiguousMatch
+  // Multiple candidates → return AmbiguousMatch
   return {
     query,
     candidates: candidates.map((e, i) => ({
@@ -221,7 +220,7 @@ function resolveFromCandidates(
       zone: e.zone,
       index: i,
     })),
-    message: `"${query}" に複数の要素がマッチしました。index パラメータで候補を指定してください。`,
+    message: `Multiple elements match "${query}". Use the index parameter to specify the intended candidate.`,
   };
 }
 

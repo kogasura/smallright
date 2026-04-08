@@ -1,6 +1,6 @@
 import type { Services, AmbiguousMatch } from '../types.js';
 
-// name属性等のCSSセレクタ内での特殊文字をエスケープする
+// Escape special characters in CSS attribute values (e.g. name attribute)
 function escapeAttrValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -12,30 +12,30 @@ export async function fillField(
   const page = await s.browser.getPage();
   const zones = s.zones.getZones();
 
-  // 事前スキャンとスナップショット取得
+  // Scan elements and take initial snapshot
   const elements = await s.elements.scan(page);
   const urlBefore = page.url();
   const snapshotBefore = await s.differ.takeSnapshot(page, zones);
 
-  // 要素解決
+  // Resolve field
   const resolved = s.elements.resolveByLabel(params.label, elements);
 
   if (resolved === null) {
     const allLabels = elements
       .filter((e) => ['input', 'select', 'textarea'].includes(e.tag))
-      .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(不明)'} (${e.tag})`)
+      .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
       .join('\n');
     throw new Error(
-      `"${params.label}" に一致するフィールドが見つかりません。\n\nページ上のフォームフィールド一覧:\n${allLabels}`,
+      `No field matching "${params.label}" was found.\n\nForm fields on the page:\n${allLabels}`,
     );
   }
 
-  // 曖昧マッチ
+  // Ambiguous match
   if ('candidates' in resolved) {
     return JSON.stringify(resolved as AmbiguousMatch, null, 2);
   }
 
-  // 入力実行（selectorがあれば直接使用）
+  // Fill the field (use selector directly if available)
   if (resolved.selector) {
     await page.locator(resolved.selector).fill(params.value);
   } else if (resolved.name) {
@@ -44,14 +44,14 @@ export async function fillField(
     await page.getByPlaceholder(resolved.placeholder).fill(params.value);
   } else {
     throw new Error(
-      `"${params.label}" のフィールドを特定できません。name属性またはplaceholder属性が必要です。`,
+      `Cannot identify the field for "${params.label}". A name or placeholder attribute is required.`,
     );
   }
 
-  // DOM安定待ち（SPA対応）
+  // Wait for DOM to settle (SPA support)
   await page.waitForTimeout(500);
 
-  // 再スキャンとスナップショット取得
+  // Re-scan and take snapshot
   await s.elements.scan(page);
   const urlAfter = page.url();
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);

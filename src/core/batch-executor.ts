@@ -6,7 +6,7 @@ import type {
   AmbiguousMatch,
 } from '../types.js';
 
-// name属性等のCSSセレクタ内での特殊文字をエスケープする
+// Escape special characters in CSS attribute values (e.g. name attribute)
 function escapeAttrValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -16,7 +16,7 @@ class BatchExecutorImpl implements BatchExecutor {
     const page = await s.browser.getPage();
     const zones = s.zones.getZones();
 
-    // 初期スナップショット取得
+    // Take initial snapshot
     const urlBefore = page.url();
     const snapshotBefore = await s.differ.takeSnapshot(page, zones);
 
@@ -27,7 +27,7 @@ class BatchExecutorImpl implements BatchExecutor {
 
       try {
         if (step.action === 'click') {
-          // テキストで要素を解決してクリック
+          // Resolve element by text and click
           const elements = await s.elements.scan(page);
           const resolved = s.elements.resolveByText(
             step.text ?? '',
@@ -47,13 +47,13 @@ class BatchExecutorImpl implements BatchExecutor {
               diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
               error: {
                 stepIndex: i,
-                message: `"${step.text}" に一致する要素が見つかりません。\n\nページ上のインタラクティブ要素一覧:\n${allTexts}`,
+                message: `No element matching "${step.text}" was found.\n\nInteractive elements on the page:\n${allTexts}`,
                 stateAtError,
               },
             };
           }
 
-          // 曖昧マッチはエラー扱い
+          // Ambiguous match is treated as an error
           if ('candidates' in resolved) {
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
@@ -78,14 +78,14 @@ class BatchExecutorImpl implements BatchExecutor {
           }
 
         } else if (step.action === 'fill') {
-          // ラベルでフィールドを解決して入力
+          // Resolve field by label and fill
           const elements = await s.elements.scan(page);
           const resolved = s.elements.resolveByLabel(step.label ?? '', elements);
 
           if (resolved === null) {
             const allLabels = elements
               .filter((e) => ['input', 'select', 'textarea'].includes(e.tag))
-              .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(不明)'} (${e.tag})`)
+              .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
               .join('\n');
             const stateAtError = await s.state.buildActionModeState(page, elements);
             return {
@@ -96,13 +96,13 @@ class BatchExecutorImpl implements BatchExecutor {
               diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
               error: {
                 stepIndex: i,
-                message: `"${step.label}" に一致するフィールドが見つかりません。\n\nページ上のフォームフィールド一覧:\n${allLabels}`,
+                message: `No field matching "${step.label}" was found.\n\nForm fields on the page:\n${allLabels}`,
                 stateAtError,
               },
             };
           }
 
-          // 曖昧マッチはエラー扱い
+          // Ambiguous match is treated as an error
           if ('candidates' in resolved) {
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
@@ -136,14 +136,14 @@ class BatchExecutorImpl implements BatchExecutor {
               diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
               error: {
                 stepIndex: i,
-                message: `"${step.label}" のフィールドを特定できません。name属性またはplaceholder属性が必要です。`,
+                message: `Cannot identify the field for "${step.label}". A name or placeholder attribute is required.`,
                 stateAtError,
               },
             };
           }
 
         } else if (step.action === 'fill_form') {
-          // フォームの各フィールドを順次入力
+          // Fill each field in the form sequentially
           const fieldEntries = Object.entries(step.fields ?? {});
           let elements = await s.elements.scan(page);
 
@@ -158,7 +158,7 @@ class BatchExecutorImpl implements BatchExecutor {
             if (resolved === null) {
               const allLabels = elements
                 .filter((e) => ['input', 'select', 'textarea'].includes(e.tag))
-                .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(不明)'} (${e.tag})`)
+                .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
                 .join('\n');
               const stateAtError = await s.state.buildActionModeState(page, elements);
               return {
@@ -169,13 +169,13 @@ class BatchExecutorImpl implements BatchExecutor {
                 diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
                 error: {
                   stepIndex: i,
-                  message: `fill_form: "${label}" に一致するフィールドが見つかりません。\n\nページ上のフォームフィールド一覧:\n${allLabels}`,
+                  message: `fill_form: No field matching "${label}" was found.\n\nForm fields on the page:\n${allLabels}`,
                   stateAtError,
                 },
               };
             }
 
-            // 曖昧マッチはエラー扱い
+            // Ambiguous match is treated as an error
             if ('candidates' in resolved) {
               const ambiguous = resolved as AmbiguousMatch;
               const stateAtError = await s.state.buildActionModeState(page, elements);
@@ -209,7 +209,7 @@ class BatchExecutorImpl implements BatchExecutor {
                 diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
                 error: {
                   stepIndex: i,
-                  message: `fill_form: "${label}" のフィールドを特定できません。`,
+                  message: `fill_form: Cannot identify the field for "${label}".`,
                   stateAtError,
                 },
               };
@@ -221,14 +221,14 @@ class BatchExecutorImpl implements BatchExecutor {
           continue;
 
         } else if (step.action === 'select') {
-          // ラベルでセレクトフィールドを解決して選択
+          // Resolve select field by label and select the option
           const elements = await s.elements.scan(page);
           const resolved = s.elements.resolveByLabel(step.label ?? '', elements);
 
           if (resolved === null) {
             const allLabels = elements
               .filter((e) => e.tag === 'select')
-              .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(不明)'} (${e.tag})`)
+              .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
               .join('\n');
             const stateAtError = await s.state.buildActionModeState(page, elements);
             return {
@@ -239,13 +239,13 @@ class BatchExecutorImpl implements BatchExecutor {
               diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
               error: {
                 stepIndex: i,
-                message: `"${step.label}" に一致するセレクトフィールドが見つかりません。\n\nページ上のセレクトフィールド一覧:\n${allLabels}`,
+                message: `No select field matching "${step.label}" was found.\n\nSelect fields on the page:\n${allLabels}`,
                 stateAtError,
               },
             };
           }
 
-          // 曖昧マッチはエラー扱い
+          // Ambiguous match is treated as an error
           if ('candidates' in resolved) {
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
@@ -277,7 +277,7 @@ class BatchExecutorImpl implements BatchExecutor {
               diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
               error: {
                 stepIndex: i,
-                message: `"${step.label}" のセレクトフィールドを特定できません。name属性が必要です。`,
+                message: `Cannot identify the select field for "${step.label}". A name attribute is required.`,
                 stateAtError,
               },
             };
@@ -285,7 +285,7 @@ class BatchExecutorImpl implements BatchExecutor {
 
         } else if (step.action === 'navigate') {
           await page.goto(step.url ?? '', { waitUntil: 'domcontentloaded' });
-          // ナビゲート先ドメインのプロファイルを自動ロード
+          // Auto-load profile for the navigated domain
           try {
             const navigatedUrl = page.url();
             const domain = new URL(navigatedUrl).hostname;
@@ -294,14 +294,14 @@ class BatchExecutorImpl implements BatchExecutor {
               s.zones.setZones(profile.zones);
             }
           } catch {
-            // URLパース失敗等は無視してプロファイルなしのまま続行
+            // Ignore URL parse failures; continue without a profile
           }
 
         } else if (step.action === 'wait') {
           await page.waitForTimeout(step.ms ?? 1000);
 
         } else {
-          // 未知のアクション
+          // Unknown action
           const elements = await s.elements.scan(page);
           const stateAtError = await s.state.buildActionModeState(page, elements);
           return {
@@ -312,19 +312,19 @@ class BatchExecutorImpl implements BatchExecutor {
             diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
             error: {
               stepIndex: i,
-              message: `未知のアクション: ${(step as BatchStep).action}`,
+              message: `Unknown action: ${(step as BatchStep).action}`,
               stateAtError,
             },
           };
         }
 
-        // 各ステップ後: DOM安定待ち + 要素再スキャン（fill_formは内部で実施済みのためcontinueで来ない）
+        // After each step: wait for DOM to settle and re-scan elements (fill_form handles this internally via continue)
         await page.waitForTimeout(500);
         await s.elements.scan(page);
         stepsCompleted++;
 
       } catch (err: unknown) {
-        // エラー時: その時点のActionModeStateを取得してエラー情報付きで返す
+        // On error: capture ActionModeState at the point of failure and return with error info
         const elements = await s.elements.scan(page).catch(() => []);
         const stateAtError = await s.state.buildActionModeState(page, elements);
         const urlNow = page.url();
@@ -344,7 +344,7 @@ class BatchExecutorImpl implements BatchExecutor {
       }
     }
 
-    // 成功時: 最終スナップショット → StateDiff計算 → BatchResult返却
+    // Success: take final snapshot, compute StateDiff, and return BatchResult
     const urlAfter = page.url();
     const snapshotAfter = await s.differ.takeSnapshot(page, zones);
     const elements = await s.elements.scan(page);

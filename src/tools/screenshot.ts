@@ -9,17 +9,17 @@ export async function takeScreenshot(
   let screenshotBuffer: Buffer;
 
   if (params.zone) {
-    // zone指定 → そのゾーンのセレクタでlocator → screenshot → Base64
+    // zone specified: locate the zone element and capture it
     const zones = s.zones.getZones();
     const zoneDefinition = zones.find((z) => z.name === params.zone);
     if (!zoneDefinition) {
       throw new Error(
-        `ゾーン "${params.zone}" が見つかりません。定義済みゾーン: ${zones.map((z) => z.name).join(', ') || '(なし)'}`,
+        `Zone "${params.zone}" not found. Defined zones: ${zones.map((z) => z.name).join(', ') || '(none)'}`,
       );
     }
     screenshotBuffer = await page.locator(zoneDefinition.selector).screenshot();
   } else {
-    // zone未指定 → ページ全体のscreenshot
+    // No zone specified: capture the full page
     screenshotBuffer = await page.screenshot({
       fullPage: params.full_page ?? false,
     });

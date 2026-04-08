@@ -34,26 +34,26 @@ export function createMcpServer(): { server: McpServer; services: Services } {
     {
       instructions: `smallright — AI-Friendly Browser Automation
 
-## 基本フロー
-1. navigate(url) でページを開く → ActionModeState が返る
-2. read_page() でコンテンツと操作可能な要素を確認
-3. click(text) / fill(label, value) / fill_form(fields) で操作
+## Basic Flow
+1. navigate(url) — open a page, returns ActionModeState
+2. read_page() — inspect content and interactive elements
+3. click(text) / fill(label, value) / fill_form(fields) — interact with elements
 
-## 要素の指定方法
-- テキストで指定: click(text: "ログイン")
-- ラベルで指定: fill(label: "メールアドレス", value: "test@example.com")
-- ref IDやCSSセレクタは不要。テキスト/ラベルで指定すること
+## Targeting Elements
+- By text: click(text: "Login")
+- By label: fill(label: "Email", value: "user@example.com")
+- Do not use ref IDs or CSS selectors — always use text or label
 
-## 曖昧マッチ時
-同名の要素が複数ある場合、候補リストが返される。index パラメータで指定して再実行すること。
+## Ambiguous Match
+If multiple elements match, a candidate list is returned. Re-call with the index parameter to select the intended element.
 
-## ゾーン（省トークン機能）
-- setup_page() でページのゾーン（header/main/sidebar等）を自動検出
-- read_page(zone: "main") で特定ゾーンだけ取得可能
-- save_profile() でゾーン定義を保存、次回訪問時に自動適用
+## Zones (token reduction)
+- setup_page() auto-detects zones on the page (header/main/sidebar, etc.)
+- read_page(zone: "main") fetches only the specified zone
+- save_profile() persists zone definitions and auto-applies them on the next visit
 
-## バッチ実行
-run_batch(steps) で複数操作を1回で実行可能。`,
+## Batch Execution
+run_batch(steps) executes multiple actions in a single call.`,
     }
   );
 
@@ -67,7 +67,7 @@ run_batch(steps) で複数操作を1回で実行可能。`,
     batch: createBatchExecutor(),
   };
 
-  // 共通のエラーハンドリングラッパー（freee-mcp-soloと同一パターン）
+  // Common error handling wrapper
   function wrap(fn: () => Promise<string>) {
     return fn()
       .then((text) => ({
@@ -77,7 +77,7 @@ run_batch(steps) で複数操作を1回で実行可能。`,
         content: [
           {
             type: "text" as const,
-            text: `エラー: ${err instanceof Error ? err.message : String(err)}`,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
         isError: true as const,
@@ -87,9 +87,9 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── navigate ──
   server.tool(
     "navigate",
-    "指定URLに遷移し、操作可能要素の一覧を返す。最初のアクションとして使用する。",
+    "Navigate to the specified URL and return a list of interactive elements.",
     {
-      url: z.string().describe("遷移先のURL（例: https://example.com）"),
+      url: z.string().describe("URL to navigate to (e.g. https://example.com)"),
     },
     (params) => wrap(() => navigate(services, params))
   );
@@ -97,13 +97,13 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── read_page ──
   server.tool(
     "read_page",
-    "現在のページの操作可能要素とコンテンツを取得する。navigate後や操作後に状態を確認するために使用する。zone指定でゾーン絞込が可能（Phase 3以降）。",
+    "Retrieve interactive elements and content of the current page. Use after navigate or any action to check the current state. Supports zone filtering to reduce token usage.",
     {
       zone: z
         .string()
         .optional()
         .describe(
-          "取得対象のゾーン名（例: main, header）。省略時はページ全体を対象とする"
+          "Zone name to fetch (e.g. main, header). Omit to retrieve the full page."
         ),
     },
     (params) => wrap(() => readPage(services, params))
@@ -112,12 +112,12 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── get_state ──
   server.tool(
     "get_state",
-    "現在のページの生の状態を取得するフォールバックツール。mode: action は操作可能要素リスト、mode: visual はフルDOM。通常は navigate / read_page を使うこと。",
+    "Fallback tool to retrieve the raw page state. mode: action returns a list of interactive elements; mode: visual returns the full DOM. Prefer navigate / read_page for normal use.",
     {
       mode: z
         .enum(["action", "visual"])
         .describe(
-          "action: 操作可能要素リスト（トークン節約）、visual: フルDOM（詳細確認用）"
+          "action: interactive element list (token-efficient), visual: full DOM (for detailed inspection)"
         ),
     },
     (params) => wrap(() => getState(services, params))
@@ -126,12 +126,12 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── click ──
   server.tool(
     "click",
-    "テキストで要素を指定してクリックする。操作後の変更ゾーンを StateDiff で返す。複数要素がマッチした場合は AmbiguousMatch を返すので、candidates を確認して index を指定して再呼び出しすること。",
+    "Click an element identified by text. Returns a StateDiff of changed zones after the action. If multiple elements match, returns AmbiguousMatch — check candidates and re-call with the index parameter.",
     {
-      text: z.string().describe("クリックする要素のテキスト（ボタンラベル、リンクテキスト等）"),
-      role: z.string().optional().describe("要素のロール（例: button, link）。指定するとマッチ精度が上がる"),
-      zone: z.string().optional().describe("検索対象ゾーン名。省略時は全ゾーンを対象とする"),
-      index: z.number().optional().describe("AmbiguousMatch 時に候補を指定するインデックス（0始まり）"),
+      text: z.string().describe("Text of the element to click (button label, link text, etc.)"),
+      role: z.string().optional().describe("Element role (e.g. button, link). Improves match accuracy when specified."),
+      zone: z.string().optional().describe("Zone name to search in. Omit to search all zones."),
+      index: z.number().optional().describe("Index to select a specific candidate from AmbiguousMatch (0-based)."),
     },
     (params) => wrap(() => clickElement(services, params))
   );
@@ -139,10 +139,10 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── fill ──
   server.tool(
     "fill",
-    "ラベルでフィールドを指定して値を入力する。操作後の変更ゾーンを StateDiff で返す。複数フィールドがマッチした場合は AmbiguousMatch を返す。",
+    "Fill a field identified by label. Returns a StateDiff of changed zones after the action. Returns AmbiguousMatch if multiple fields match.",
     {
-      label: z.string().describe("入力フィールドのラベルテキスト（<label>、aria-label、placeholder等）"),
-      value: z.string().describe("入力する値"),
+      label: z.string().describe("Label text of the input field (<label>, aria-label, placeholder, etc.)"),
+      value: z.string().describe("Value to enter"),
     },
     (params) => wrap(() => fillField(services, params))
   );
@@ -150,9 +150,9 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── fill_form ──
   server.tool(
     "fill_form",
-    "フォームの複数フィールドをラベルと値のマップで一括入力する。操作後の変更ゾーンを StateDiff で返す。途中でマッチ失敗した場合は入力済みフィールドとエラー情報を返す。",
+    "Fill multiple form fields at once using a label-to-value map. Returns a StateDiff after all fields are filled. If a field cannot be matched, returns the filled fields so far along with error details.",
     {
-      fields: z.record(z.string(), z.string()).describe("ラベル→値のマップ（例: { \"メールアドレス\": \"user@example.com\", \"パスワード\": \"password\" }）"),
+      fields: z.record(z.string(), z.string()).describe("Map of label to value (e.g. { \"Email\": \"user@example.com\", \"Password\": \"secret\" })"),
     },
     (params) => wrap(() => fillForm(services, params))
   );
@@ -160,10 +160,10 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── select_option ──
   server.tool(
     "select_option",
-    "ラベルでドロップダウンを指定してオプションを選択する。操作後の変更ゾーンを StateDiff で返す。",
+    "Select an option in a dropdown identified by label. Returns a StateDiff of changed zones after the action.",
     {
-      label: z.string().describe("セレクトフィールドのラベルテキスト"),
-      value: z.string().describe("選択するオプションの value 属性または表示テキスト"),
+      label: z.string().describe("Label text of the select field"),
+      value: z.string().describe("Option value attribute or display text to select"),
     },
     (params) => wrap(() => selectOption(services, params))
   );
@@ -171,7 +171,7 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── setup_page ──
   server.tool(
     "setup_page",
-    "現在のページのゾーンを自動検出し、ZoneDefinition[] を返す。初回訪問時や save_profile の前に実行する。検出結果を確認・修正してから define_zones で確定するか、そのまま save_profile で保存する。",
+    "Auto-detect zones on the current page and return ZoneDefinition[]. Run this on the first visit or before save_profile. Review or adjust the results with define_zones before saving, or pass them directly to save_profile.",
     {},
     (_params) => wrap(() => setupPage(services, _params as Record<string, never>))
   );
@@ -179,15 +179,15 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── define_zones ──
   server.tool(
     "define_zones",
-    "ゾーン定義を手動で指定して現在のセッションに適用する。setup_page の結果を修正したい場合や、サイト固有のゾーンを明示的に設定したい場合に使用する。",
+    "Manually specify zone definitions and apply them to the current session. Use this to adjust setup_page results or to explicitly configure site-specific zones.",
     {
       zones: z.array(
         z.object({
-          name: z.string().describe("ゾーン名（例: header, main, sidebar, footer）"),
-          selector: z.string().describe("CSSセレクタ（例: #main, .content, main）"),
-          description: z.string().optional().describe("ゾーンの説明（任意）"),
+          name: z.string().describe("Zone name (e.g. header, main, sidebar, footer)"),
+          selector: z.string().describe("CSS selector (e.g. #main, .content, main)"),
+          description: z.string().optional().describe("Optional description of the zone"),
         })
-      ).describe("ゾーン定義の配列"),
+      ).describe("Array of zone definitions"),
     },
     (params) => wrap(() => defineZones(services, params))
   );
@@ -195,9 +195,9 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── save_profile ──
   server.tool(
     "save_profile",
-    "現在のゾーン定義をドメインにひもづけてファイルに保存する。setup_page / define_zones でゾーンを確定した後に実行する。次回 navigate 時に自動ロードされる。",
+    "Save the current zone definitions to a file associated with the domain. Run after finalizing zones with setup_page or define_zones. The profile is auto-loaded on the next navigate.",
     {
-      domain: z.string().optional().describe("保存先ドメイン（例: example.com）。省略時は現在のページのhostnameを使用する"),
+      domain: z.string().optional().describe("Domain to save to (e.g. example.com). Defaults to the current page hostname."),
     },
     (params) => wrap(() => saveProfile(services, params))
   );
@@ -205,7 +205,7 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── list_profiles ──
   server.tool(
     "list_profiles",
-    "保存済みのサイトプロファイル一覧を返す。",
+    "Return a list of saved site profiles.",
     {},
     (_params) => wrap(() => listProfiles(services, _params as Record<string, never>))
   );
@@ -213,9 +213,9 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── delete_profile ──
   server.tool(
     "delete_profile",
-    "指定ドメインのサイトプロファイルを削除する。",
+    "Delete the site profile for the specified domain.",
     {
-      domain: z.string().describe("削除対象のドメイン（例: example.com）"),
+      domain: z.string().describe("Domain of the profile to delete (e.g. example.com)"),
     },
     (params) => wrap(() => deleteProfile(services, params))
   );
@@ -223,33 +223,33 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── run_batch ──
   server.tool(
     "run_batch",
-    "複数の操作ステップを一括実行し、最終状態のStateDiffを返す。MCPのラウンドトリップを削減するために使用する。エラー発生時はそのステップのインデックスと状態を返す。曖昧マッチが発生した場合もエラーとして停止する。",
+    "Execute multiple action steps in a single call and return the final StateDiff. Reduces MCP round-trips. On error, returns the step index and state at the point of failure. Ambiguous matches also cause the batch to stop.",
     {
       steps: z.array(
         z.object({
           action: z
             .enum(["click", "fill", "fill_form", "select", "navigate", "wait"])
-            .describe("実行するアクションの種類"),
-          text: z.string().optional().describe("click: クリックする要素のテキスト"),
+            .describe("Type of action to perform"),
+          text: z.string().optional().describe("click: text of the element to click"),
           label: z
             .string()
             .optional()
-            .describe("fill / select: フィールドのラベルテキスト"),
+            .describe("fill / select: label text of the field"),
           value: z
             .string()
             .optional()
-            .describe("fill / select: 入力する値またはオプション"),
+            .describe("fill / select: value to enter or option to select"),
           fields: z
             .record(z.string(), z.string())
             .optional()
-            .describe("fill_form: ラベル→値のマップ"),
-          url: z.string().optional().describe("navigate: 遷移先URL"),
+            .describe("fill_form: map of label to value"),
+          url: z.string().optional().describe("navigate: URL to navigate to"),
           ms: z
             .number()
             .optional()
-            .describe("wait: 待機ミリ秒（省略時1000ms）"),
+            .describe("wait: milliseconds to wait (default 1000)"),
         })
-      ).describe("実行するステップの配列"),
+      ).describe("Array of steps to execute"),
     },
     (params) => wrap(() => runBatch(services, params))
   );
@@ -257,16 +257,16 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── read_table ──
   server.tool(
     "read_table",
-    "ページ内のテーブルをJSON配列で返す。zone または selector でテーブルを絞り込める。どちらも省略するとページ内の最初のテーブルを対象とする。",
+    "Return a table on the page as a JSON array. Narrow the target with zone or selector. If neither is specified, the first table on the page is used.",
     {
       zone: z
         .string()
         .optional()
-        .describe("テーブルを含むゾーン名。ゾーン内の最初のテーブルを対象とする"),
+        .describe("Zone name containing the table. Targets the first table within the zone."),
       selector: z
         .string()
         .optional()
-        .describe("テーブルを直接指定するCSSセレクタ（例: #data-table, .results table）"),
+        .describe("CSS selector to directly target the table (e.g. #data-table, .results table)"),
     },
     (params) => wrap(() => readTable(services, params))
   );
@@ -274,16 +274,16 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── screenshot ──
   server.tool(
     "screenshot",
-    "現在のページまたは指定ゾーンのスクリーンショットを取得する。Base64エンコードされた画像をJSONで返す。",
+    "Capture a screenshot of the current page or a specified zone. Returns a Base64-encoded image as JSON.",
     {
       zone: z
         .string()
         .optional()
-        .describe("キャプチャ対象のゾーン名。省略時はページ全体を対象とする"),
+        .describe("Zone name to capture. Omit for a full-page screenshot."),
       full_page: z
         .boolean()
         .optional()
-        .describe("true にするとスクロール全体をキャプチャする（zone未指定時のみ有効）"),
+        .describe("Set to true to capture the full scrollable page (only applies when zone is omitted)."),
     },
     (params) => wrap(() => takeScreenshot(services, params))
   );
@@ -291,12 +291,12 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── evaluate ──
   server.tool(
     "evaluate",
-    "ブラウザ上でカスタムJavaScriptを実行し、その戻り値をJSONで返す。フォールバック用の低レベルツール。通常は他のツールを使うこと。",
+    "Execute custom JavaScript in the browser and return the result as JSON. Low-level fallback tool — prefer other tools when possible.",
     {
       script: z
         .string()
         .describe(
-          "実行するJavaScript（関数本体。例: \"return document.title\" ）"
+          "JavaScript to execute (function body, e.g. \"return document.title\")"
         ),
     },
     (params) => wrap(() => evaluate(services, params))

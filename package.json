@@ -1,6 +1,15 @@
 {
   "name": "smallright",
   "version": "0.1.0",
+  "description": "AI-friendly browser automation MCP server that reduces token consumption by zone-based partial DOM retrieval",
+  "author": "kogasura",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kogasura/smallright.git"
+  },
+  "keywords": ["mcp", "playwright", "browser-automation", "ai", "llm"],
+  "files": ["dist", "README.md", "LICENSE"],
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -17,9 +26,9 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "tsx": "latest",
-    "typescript": "latest"
+    "@types/node": "^25.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
   },
   "engines": {
     "node": ">=20.0.0"

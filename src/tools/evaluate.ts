@@ -6,7 +6,7 @@ export async function evaluate(
 ): Promise<string> {
   const page = await s.browser.getPage();
 
-  // page.evaluate にスクリプト文字列を直接渡す
+  // Pass the script string directly to page.evaluate
   // eslint-disable-next-line no-new-func
   const result = await page.evaluate(new Function(params.script) as () => unknown);
 

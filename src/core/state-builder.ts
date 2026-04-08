@@ -14,7 +14,7 @@ const FORM_TAGS = new Set(["input", "select", "textarea"]);
 const FORM_ROLES = new Set(["textbox", "combobox", "listbox", "searchbox"]);
 
 function toPublicElement(el: InteractiveElement): PublicElement {
-  const { ref: _ref, ...rest } = el;
+  const { ref: _ref, selector: _sel, ...rest } = el;
   return rest;
 }
 

@@ -6,33 +6,33 @@ export async function readTable(
 ): Promise<string> {
   const page = await s.browser.getPage();
 
-  // テーブルを抽出するセレクタを決定する
+  // Determine the selector for the target table
   let tableSelector: string | null = null;
 
   if (params.selector) {
-    // selector指定 → そのセレクタのtable
+    // selector specified: use it directly
     tableSelector = params.selector;
   } else if (params.zone) {
-    // zone指定 → そのゾーン内の最初のtable
+    // zone specified: target the first table within that zone
     const zones = s.zones.getZones();
     const zoneDefinition = zones.find((z) => z.name === params.zone);
     if (!zoneDefinition) {
       throw new Error(
-        `ゾーン "${params.zone}" が見つかりません。定義済みゾーン: ${zones.map((z) => z.name).join(', ') || '(なし)'}`,
+        `Zone "${params.zone}" not found. Defined zones: ${zones.map((z) => z.name).join(', ') || '(none)'}`,
       );
     }
     tableSelector = `${zoneDefinition.selector} table`;
   }
-  // どちらもなし → ページ内の最初のtable（tableSelector = null のまま）
+  // Neither specified: target the first table on the page (tableSelector remains null)
 
-  // page.evaluate でテーブルを解析
+  // Parse the table in the browser
   const rows = await page.evaluate((sel: string | null) => {
     let table: HTMLTableElement | null = null;
 
     if (sel) {
       const el = document.querySelector(sel);
       if (!el) return null;
-      // selがtable自身か、その中のtableか
+      // sel may point to the table itself or a container holding a table
       if (el.tagName.toLowerCase() === 'table') {
         table = el as HTMLTableElement;
       } else {
@@ -44,7 +44,7 @@ export async function readTable(
 
     if (!table) return null;
 
-    // theadからカラム名を取得
+    // Extract column names from thead
     const headers: string[] = [];
     const headerRow = table.querySelector('thead tr');
     if (headerRow) {
@@ -53,7 +53,7 @@ export async function readTable(
       });
     }
 
-    // tbodyの各行をオブジェクトに変換
+    // Convert each tbody row to an object
     const result: Record<string, string>[] = [];
     const bodyRows = table.querySelectorAll('tbody tr');
     bodyRows.forEach((row) => {
@@ -66,18 +66,18 @@ export async function readTable(
       result.push(rowObj);
     });
 
-    // theadがない場合（ヘッダーなしテーブル）: 最初の行をヘッダーとして扱う
+    // If no thead, treat the first row as the header
     if (headers.length === 0 && result.length > 0) {
       const firstRow = table.querySelector('tr');
       if (firstRow) {
         firstRow.querySelectorAll('td, th').forEach((cell, index) => {
           headers[index] = (cell as HTMLElement).innerText?.trim() ?? cell.textContent?.trim() ?? String(index);
         });
-        // 最初の行をヘッダーとして再パース
+        // Re-parse excluding the header row
         result.length = 0;
         const allRows = table.querySelectorAll('tr');
         allRows.forEach((row, rowIndex) => {
-          if (rowIndex === 0) return; // ヘッダー行をスキップ
+          if (rowIndex === 0) return; // skip header row
           const cells = row.querySelectorAll('td, th');
           const rowObj: Record<string, string> = {};
           cells.forEach((cell, index) => {
@@ -94,11 +94,11 @@ export async function readTable(
 
   if (rows === null) {
     const location = params.selector
-      ? `セレクタ "${params.selector}"`
+      ? `selector "${params.selector}"`
       : params.zone
-        ? `ゾーン "${params.zone}"`
-        : 'ページ内';
-    throw new Error(`${location} にテーブルが見つかりません。`);
+        ? `zone "${params.zone}"`
+        : 'the page';
+    throw new Error(`No table found in ${location}.`);
   }
 
   return JSON.stringify(rows, null, 2);

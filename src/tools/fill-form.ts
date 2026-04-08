@@ -1,6 +1,6 @@
 import type { Services, AmbiguousMatch } from '../types.js';
 
-// name属性等のCSSセレクタ内での特殊文字をエスケープする
+// Escape special characters in CSS attribute values (e.g. name attribute)
 function escapeAttrValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -12,7 +12,7 @@ export async function fillForm(
   const page = await s.browser.getPage();
   const zones = s.zones.getZones();
 
-  // 空のfieldsに対して早期リターン
+  // Early return for empty fields
   const fieldEntries = Object.entries(params.fields);
   if (fieldEntries.length === 0) {
     const urlNow = page.url();
@@ -21,20 +21,20 @@ export async function fillForm(
     return JSON.stringify(diff, null, 2);
   }
 
-  // 事前スナップショット取得
+  // Take initial snapshot
   const urlBefore = page.url();
   const snapshotBefore = await s.differ.takeSnapshot(page, zones);
 
   const filledFields: string[] = [];
 
-  // ループ前に1回だけスキャン
+  // Scan once before the loop
   let elements = await s.elements.scan(page);
 
   for (const [label, value] of fieldEntries) {
-    // 要素解決
+    // Resolve field
     let resolved = s.elements.resolveByLabel(label, elements);
 
-    // 解決失敗時のみ再スキャン（動的フォーム対応）
+    // Re-scan on failure to handle dynamic forms
     if (resolved === null) {
       elements = await s.elements.scan(page);
       resolved = s.elements.resolveByLabel(label, elements);
@@ -43,11 +43,11 @@ export async function fillForm(
     if (resolved === null) {
       const allLabels = elements
         .filter((e) => ['input', 'select', 'textarea'].includes(e.tag))
-        .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(不明)'} (${e.tag})`)
+        .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
         .join('\n');
       return JSON.stringify(
         {
-          error: `"${label}" に一致するフィールドが見つかりません`,
+          error: `No field matching "${label}" was found`,
           filledFields,
           availableFields: allLabels,
         },
@@ -56,11 +56,11 @@ export async function fillForm(
       );
     }
 
-    // 曖昧マッチ
+    // Ambiguous match
     if ('candidates' in resolved) {
       return JSON.stringify(
         {
-          error: `"${label}" が曖昧マッチしました`,
+          error: `"${label}" matched multiple fields`,
           filledFields,
           ambiguousMatch: resolved as AmbiguousMatch,
         },
@@ -69,7 +69,7 @@ export async function fillForm(
       );
     }
 
-    // 入力実行（selectorがあれば直接使用）
+    // Fill the field (use selector directly if available)
     if (resolved.selector) {
       await page.locator(resolved.selector).fill(value);
     } else if (resolved.name) {
@@ -79,7 +79,7 @@ export async function fillForm(
     } else {
       return JSON.stringify(
         {
-          error: `"${label}" のフィールドを特定できません。name属性またはplaceholder属性が必要です。`,
+          error: `Cannot identify the field for "${label}". A name or placeholder attribute is required.`,
           filledFields,
         },
         null,
@@ -87,13 +87,13 @@ export async function fillForm(
       );
     }
 
-    // DOM安定待ち（SPA対応）
+    // Wait for DOM to settle (SPA support)
     await page.waitForTimeout(500);
 
     filledFields.push(label);
   }
 
-  // 全フィールド入力後のスナップショット取得
+  // Take final snapshot after all fields are filled
   await s.elements.scan(page);
   const urlAfter = page.url();
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);
