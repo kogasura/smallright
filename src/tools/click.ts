@@ -60,8 +60,16 @@ export async function clickElement(
   const locator = resolveLocator(page, resolved);
   await locator.click({ timeout: 10000 });
 
-  // Wait for DOM to settle (SPA support)
-  await page.waitForTimeout(500);
+  // URL change polling (max 2s)
+  const maxWait = 2000;
+  const interval = 100;
+  let elapsed = 0;
+  while (elapsed < maxWait && page.url() === urlBefore) {
+    await page.waitForTimeout(interval);
+    elapsed += interval;
+  }
+  // DOM stabilization wait
+  await page.waitForTimeout(300);
 
   // Re-scan and take snapshot
   await s.elements.scan(page);

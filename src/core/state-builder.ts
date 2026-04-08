@@ -14,7 +14,7 @@ const FORM_TAGS = new Set(["input", "select", "textarea"]);
 const FORM_ROLES = new Set(["textbox", "combobox", "listbox", "searchbox"]);
 
 function toPublicElement(el: InteractiveElement): PublicElement {
-  const { ref: _ref, selector: _sel, scanIndex: _idx, ...rest } = el;
+  const { ref: _ref, selector: _sel, scanIndex: _idx, context: _ctx, ...rest } = el;
   return rest;
 }
 
@@ -30,14 +30,22 @@ function isFormElement(el: InteractiveElement): boolean {
   return false;
 }
 
+function classifyTextPattern(text: string | undefined): string {
+  if (!text || text.trim() === '') return 'repetitive';
+  // Short text composed only of digits, date chars, weekday chars → repetitive
+  if (text.length <= 20 && /^[\d年月日曜火水木金土\s:\/\-.]+$/.test(text)) return 'repetitive';
+  // Everything else is unique
+  return `unique:${text}`;
+}
+
 // Collapse groups of 10+ similar elements (same tag/role/type/disabled) into summary (U3/P3)
 function collapseSimilar(elements: PublicElement[]): PublicElement[] {
   if (elements.length < 10) return elements;
 
-  // Group by tag + role + type + disabled
+  // Group by tag + role + type + disabled + text pattern
   const groups = new Map<string, { items: PublicElement[]; indices: number[] }>();
   elements.forEach((el, i) => {
-    const key = `${el.tag}|${el.role ?? ''}|${el.type ?? ''}|${el.disabled}`;
+    const key = `${el.tag}|${el.role ?? ''}|${el.type ?? ''}|${el.disabled}|${classifyTextPattern(el.text)}`;
     const group = groups.get(key);
     if (group) { group.items.push(el); group.indices.push(i); }
     else { groups.set(key, { items: [el], indices: [i] }); }

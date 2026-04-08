@@ -75,7 +75,42 @@ class ElementRegistryImpl implements ElementRegistry {
         const titleAttr = htmlEl.getAttribute('title');
         const testId = htmlEl.getAttribute('data-testid');
         const typeAttr = htmlEl.getAttribute('type');
-        const text = ariaLabel?.trim() || innerText || titleAttr?.trim() || testId || typeAttr || '';
+
+        // SVG icon name fallback for icon-only buttons
+        let svgIconName: string | undefined;
+        if (!ariaLabel && !innerText && !titleAttr && !testId) {
+          const svg = htmlEl.querySelector('svg[data-testid]');
+          if (svg) {
+            const iconTestId = svg.getAttribute('data-testid') ?? '';
+            // "DeleteIcon" → "Delete", "CircleOutlinedIcon" → "CircleOutlined"
+            svgIconName = iconTestId.replace(/Icon$/, '') || undefined;
+          }
+        }
+        const iconFallback = svgIconName ? `[${svgIconName}]` : (!ariaLabel && !innerText && !titleAttr && !testId && !typeAttr ? '[icon]' : undefined);
+        const text = ariaLabel?.trim() || innerText || titleAttr?.trim() || testId || iconFallback || typeAttr || '';
+
+        // Context: find nearest heading in ancestor tree
+        let context: string | undefined;
+        let contextNode: Element | null = htmlEl.parentElement;
+        while (contextNode && contextNode !== document.body) {
+          const heading = contextNode.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > h4');
+          if (heading && heading !== htmlEl) {
+            const headingText = (heading as HTMLElement).innerText?.trim();
+            if (headingText && headingText !== text) {
+              context = headingText.slice(0, 50);
+              break;
+            }
+          }
+          contextNode = contextNode.parentElement;
+        }
+        // Fallback: semantic landmark aria-label
+        if (!context) {
+          const landmark = htmlEl.closest('section, article, [role="region"], nav, form');
+          if (landmark) {
+            const label = landmark.getAttribute('aria-label');
+            if (label) context = label.trim().slice(0, 50);
+          }
+        }
 
         // input type / value / placeholder / disabled
         const tag = htmlEl.tagName.toLowerCase();
@@ -139,6 +174,7 @@ class ElementRegistryImpl implements ElementRegistry {
           value,
           disabled,
           selector,
+          context,
         };
       }).filter((el): el is NonNullable<typeof el> => el !== null);
     }, INTERACTIVE_SELECTOR);
@@ -279,6 +315,7 @@ function resolveFromCandidates(
       text: e.text,
       tag: e.tag,
       zone: e.zone,
+      context: e.context,
       index: i,
     })),
     message: `Multiple elements match "${query}". Use the index parameter to specify the intended candidate.`,

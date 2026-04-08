@@ -27,9 +27,10 @@ export interface InteractiveElement {
   zone?: string;
   selector?: string;      // CSS selector that uniquely identifies this element (internal use only)
   scanIndex?: number;     // index in scan result array (internal use only, nth-based fallback)
+  context?: string;       // Nearby heading or landmark label for disambiguation
 }
 
-export type PublicElement = Omit<InteractiveElement, "ref" | "selector" | "scanIndex">;
+export type PublicElement = Omit<InteractiveElement, "ref" | "selector" | "scanIndex" | "context">;
 
 // Page state
 export interface ActionModeState {
@@ -84,7 +85,7 @@ export interface BatchResult {
 // Returned when a query matches multiple elements
 export interface AmbiguousMatch {
   query: string;
-  candidates: Array<{ text: string; tag: string; zone?: string; index: number }>;
+  candidates: Array<{ text: string; tag: string; zone?: string; context?: string; index: number }>;
   message: string;
 }
 
