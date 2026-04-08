@@ -27,6 +27,8 @@ class ElementRegistryImpl implements ElementRegistry {
         if (unique.length >= ELEMENT_LIMIT) break;
         if (!seen.has(node)) {
           seen.add(node);
+          // Skip nested elements that are descendants of an already-added element with the same text
+          if (unique.some(u => u.contains(node) && (u as HTMLElement).innerText?.trim() === (node as HTMLElement).innerText?.trim())) continue;
           unique.push(node);
         }
       }
@@ -108,6 +110,7 @@ class ElementRegistryImpl implements ElementRegistry {
     elements: InteractiveElement[],
     zone?: string,
     index?: number,
+    role?: string,
   ): InteractiveElement | AmbiguousMatch | null {
     const normalized = normalize(query);
     const pool = zone ? elements.filter((e) => e.zone === zone) : elements;
@@ -117,7 +120,18 @@ class ElementRegistryImpl implements ElementRegistry {
     const prefix = pool.filter((e) => normalize(e.text).startsWith(normalized));
     const partial = pool.filter((e) => normalize(e.text).includes(normalized));
 
-    const candidates = pickBestMatches(exact, prefix, partial);
+    let candidates = pickBestMatches(exact, prefix, partial);
+
+    if (role) {
+      // Filter by role: match role attribute or tag via ROLE_TAG_MAP
+      const roleFiltered = candidates.filter(
+        (e) => e.role === role || e.tag === ROLE_TAG_MAP[role],
+      );
+      if (roleFiltered.length > 0) candidates = roleFiltered;
+    } else {
+      // No role specified: prioritize native interactive elements over ARIA-role elements
+      candidates = prioritizeInteractive(candidates);
+    }
 
     return resolveFromCandidates(query, candidates, index);
   }
@@ -162,6 +176,25 @@ class ElementRegistryImpl implements ElementRegistry {
 
     return resolveFromCandidates(label, candidates, index);
   }
+}
+
+// Map from role name to corresponding native HTML tag
+const ROLE_TAG_MAP: Record<string, string> = { button: 'button', link: 'a', menuitem: 'li' };
+
+// Priority score for interactive elements: lower is higher priority
+function interactivePriority(e: InteractiveElement): number {
+  if (e.tag === 'a' || e.tag === 'button') return 1;
+  if (e.tag === 'input' || e.tag === 'select' || e.tag === 'textarea') return 2;
+  if (e.role === 'button' || e.role === 'link') return 3;
+  return 4;
+}
+
+// Return only the highest-priority candidates; returns original array if single element
+function prioritizeInteractive(candidates: InteractiveElement[]): InteractiveElement[] {
+  if (candidates.length <= 1) return candidates;
+  const sorted = [...candidates].sort((a, b) => interactivePriority(a) - interactivePriority(b));
+  const best = interactivePriority(sorted[0]);
+  return sorted.filter((e) => interactivePriority(e) === best);
 }
 
 // Normalize text: collapse whitespace, trim, and lowercase

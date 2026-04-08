@@ -14,7 +14,7 @@ export async function clickElement(
   const snapshotBefore = await s.differ.takeSnapshot(page, zones);
 
   // Resolve element
-  const resolved = s.elements.resolveByText(params.text, elements, params.zone, params.index);
+  const resolved = s.elements.resolveByText(params.text, elements, params.zone, params.index, params.role);
 
   if (resolved === null) {
     const allTexts = elements.map((e) => `- ${e.text} (${e.tag})`).join('\n');

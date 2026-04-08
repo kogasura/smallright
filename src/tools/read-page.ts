@@ -9,12 +9,14 @@ export async function readPage(
 
   if (params.zone) {
     // zone specified: return snapshot of that zone
+    await s.browser.waitForSpaReady(page);
     const snapshot = await s.zones.getZoneSnapshot(page, params.zone);
     return JSON.stringify(snapshot, null, 2);
   }
 
   if (zones.length > 0) {
     // Zones are defined: prefer the 'main' zone, otherwise use the first zone
+    await s.browser.waitForSpaReady(page);
     const targetZone = zones.find(z => z.name === 'main') ?? zones[0];
     const snapshot = await s.zones.getZoneSnapshot(page, targetZone.name);
     return JSON.stringify(snapshot, null, 2);

@@ -99,7 +99,7 @@ export interface BrowserManager {
 
 export interface ElementRegistry {
   scan(page: import('playwright').Page): Promise<InteractiveElement[]>;
-  resolveByText(query: string, elements: InteractiveElement[], zone?: string, index?: number): InteractiveElement | AmbiguousMatch | null;
+  resolveByText(query: string, elements: InteractiveElement[], zone?: string, index?: number, role?: string): InteractiveElement | AmbiguousMatch | null;
   resolveByLabel(label: string, elements: InteractiveElement[], index?: number): InteractiveElement | AmbiguousMatch | null;
 }
 

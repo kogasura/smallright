@@ -48,13 +48,25 @@ class BrowserManagerImpl implements BrowserManager {
   }
 
   async waitForSpaReady(page: Page): Promise<void> {
+    const DEFAULT_TIMEOUT = 10000;
     const raw = parseInt(process.env['SMALLRIGHT_WAIT_TIMEOUT'] ?? '10000', 10);
-    const timeout = Number.isNaN(raw) || raw <= 0 ? 10000 : raw;
+    const timeout = Number.isNaN(raw) || raw <= 0 ? DEFAULT_TIMEOUT : raw;
     const start = Date.now();
+    let prevCount = 0;
+    let stableCount = 0;
+
     while (Date.now() - start < timeout) {
       try {
         const count = await page.locator(INTERACTIVE_SELECTOR).count();
-        if (count > 0) return;
+        if (count > 0) {
+          if (count === prevCount) {
+            stableCount++;
+          } else {
+            stableCount = 0;
+            prevCount = count;
+          }
+          if (stableCount >= 3) return; // 300ms安定で確定
+        }
       } catch (e) {
         if (e instanceof Error && e.message.includes('closed')) return; // page closed
         throw e;
