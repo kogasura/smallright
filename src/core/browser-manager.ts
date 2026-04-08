@@ -1,9 +1,11 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import type { BrowserManager } from '../types.js';
+import { INTERACTIVE_SELECTOR } from './element-registry.js';
 
 class BrowserManagerImpl implements BrowserManager {
   private browser: Browser | null = null;
   private page: Page | null = null;
+  private lastDialogMessages: Array<{ type: string; message: string }> = [];
 
   private isHeadless(): boolean {
     const envVal = process.env['SMALLRIGHT_HEADLESS'];
@@ -26,7 +28,12 @@ class BrowserManagerImpl implements BrowserManager {
       return this.page;
     }
     const browser = await this.getBrowser();
+    this.lastDialogMessages = [];
     this.page = await browser.newPage();
+    this.page.on('dialog', async (dialog) => {
+      this.lastDialogMessages.push({ type: dialog.type(), message: dialog.message() });
+      await dialog.accept();
+    });
     await this.page.setViewportSize({ width: 1280, height: 720 });
     return this.page;
   }
@@ -38,6 +45,29 @@ class BrowserManagerImpl implements BrowserManager {
     }
     const page = await this.getPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  }
+
+  async waitForSpaReady(page: Page): Promise<void> {
+    const raw = parseInt(process.env['SMALLRIGHT_WAIT_TIMEOUT'] ?? '10000', 10);
+    const timeout = Number.isNaN(raw) || raw <= 0 ? 10000 : raw;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      try {
+        const count = await page.locator(INTERACTIVE_SELECTOR).count();
+        if (count > 0) return;
+      } catch (e) {
+        if (e instanceof Error && e.message.includes('closed')) return; // page closed
+        throw e;
+      }
+      await page.waitForTimeout(100);
+    }
+    // timeout - continue without error
+  }
+
+  consumeDialogMessages(): Array<{ type: string; message: string }> {
+    const messages = this.lastDialogMessages;
+    this.lastDialogMessages = [];
+    return messages;
   }
 
   async close(): Promise<void> {

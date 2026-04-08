@@ -1,4 +1,5 @@
 import type { Services, AmbiguousMatch } from '../types.js';
+import { resolveLocator } from '../core/locator-helper.js';
 
 export async function clickElement(
   s: Services,
@@ -27,13 +28,9 @@ export async function clickElement(
     return JSON.stringify(resolved as AmbiguousMatch, null, 2);
   }
 
-  // Click the element (use selector directly if available)
-  if (resolved.selector) {
-    await page.locator(resolved.selector).click({ timeout: 10000 });
-  } else {
-    // Fallback when no selector is available (should not normally occur)
-    await page.locator(`text=${params.text}`).first().click({ timeout: 10000 });
-  }
+  // Click the element
+  const locator = resolveLocator(page, resolved);
+  await locator.click({ timeout: 10000 });
 
   // Wait for DOM to settle (SPA support)
   await page.waitForTimeout(500);
@@ -44,5 +41,10 @@ export async function clickElement(
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);
 
   const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
-  return JSON.stringify(diff, null, 2);
+  const responseJson = JSON.stringify(diff, null, 2);
+  const dialogs = s.browser.consumeDialogMessages();
+  if (dialogs.length > 0) {
+    return JSON.stringify({ ...JSON.parse(responseJson), dialogs }, null, 2);
+  }
+  return responseJson;
 }

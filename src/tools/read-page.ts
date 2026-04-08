@@ -21,6 +21,7 @@ export async function readPage(
   }
 
   // No zones defined: fall back to returning the full page state
+  await s.browser.waitForSpaReady(page);
   const elements = await s.elements.scan(page);
   const state = await s.state.buildActionModeState(page, elements);
   return JSON.stringify(state, null, 2);

@@ -5,11 +5,7 @@ import type {
   Services,
   AmbiguousMatch,
 } from '../types.js';
-
-// Escape special characters in CSS attribute values (e.g. name attribute)
-function escapeAttrValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+import { resolveLocator } from './locator-helper.js';
 
 class BatchExecutorImpl implements BatchExecutor {
   async execute(s: Services, steps: BatchStep[]): Promise<BatchResult> {
@@ -39,7 +35,8 @@ class BatchExecutorImpl implements BatchExecutor {
           if (resolved === null) {
             const allTexts = elements.map((e) => `- ${e.text} (${e.tag})`).join('\n');
             const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
+            const dialogs = s.browser.consumeDialogMessages();
+            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
               success: false,
               stepsCompleted,
               totalSteps: steps.length,
@@ -51,13 +48,16 @@ class BatchExecutorImpl implements BatchExecutor {
                 stateAtError,
               },
             };
+            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+            return earlyResult;
           }
 
           // Ambiguous match is treated as an error
           if ('candidates' in resolved) {
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
+            const dialogs = s.browser.consumeDialogMessages();
+            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
               success: false,
               stepsCompleted,
               totalSteps: steps.length,
@@ -69,13 +69,12 @@ class BatchExecutorImpl implements BatchExecutor {
                 stateAtError,
               },
             };
+            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+            return earlyResult;
           }
 
-          if (resolved.selector) {
-            await page.locator(resolved.selector).click({ timeout: 10000 });
-          } else {
-            await page.locator(`text=${step.text}`).first().click({ timeout: 10000 });
-          }
+          const locator = resolveLocator(page, resolved);
+          await locator.click({ timeout: 10000 });
 
         } else if (step.action === 'fill') {
           // Resolve field by label and fill
@@ -88,7 +87,8 @@ class BatchExecutorImpl implements BatchExecutor {
               .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
               .join('\n');
             const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
+            const dialogs = s.browser.consumeDialogMessages();
+            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
               success: false,
               stepsCompleted,
               totalSteps: steps.length,
@@ -100,13 +100,16 @@ class BatchExecutorImpl implements BatchExecutor {
                 stateAtError,
               },
             };
+            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+            return earlyResult;
           }
 
           // Ambiguous match is treated as an error
           if ('candidates' in resolved) {
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
+            const dialogs = s.browser.consumeDialogMessages();
+            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
               success: false,
               stepsCompleted,
               totalSteps: steps.length,
@@ -118,29 +121,12 @@ class BatchExecutorImpl implements BatchExecutor {
                 stateAtError,
               },
             };
+            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+            return earlyResult;
           }
 
-          if (resolved.selector) {
-            await page.locator(resolved.selector).fill(step.value ?? '');
-          } else if (resolved.name) {
-            await page.locator(`[name="${escapeAttrValue(resolved.name)}"]`).fill(step.value ?? '');
-          } else if (resolved.placeholder) {
-            await page.getByPlaceholder(resolved.placeholder).fill(step.value ?? '');
-          } else {
-            const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
-              success: false,
-              stepsCompleted,
-              totalSteps: steps.length,
-              finalState: stateAtError,
-              diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
-              error: {
-                stepIndex: i,
-                message: `Cannot identify the field for "${step.label}". A name or placeholder attribute is required.`,
-                stateAtError,
-              },
-            };
-          }
+          const locator = resolveLocator(page, resolved);
+          await locator.fill(step.value ?? '');
 
         } else if (step.action === 'fill_form') {
           // Fill each field in the form sequentially
@@ -161,7 +147,8 @@ class BatchExecutorImpl implements BatchExecutor {
                 .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
                 .join('\n');
               const stateAtError = await s.state.buildActionModeState(page, elements);
-              return {
+              const dialogs = s.browser.consumeDialogMessages();
+              const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
                 success: false,
                 stepsCompleted,
                 totalSteps: steps.length,
@@ -173,13 +160,16 @@ class BatchExecutorImpl implements BatchExecutor {
                   stateAtError,
                 },
               };
+              if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+              return earlyResult;
             }
 
             // Ambiguous match is treated as an error
             if ('candidates' in resolved) {
               const ambiguous = resolved as AmbiguousMatch;
               const stateAtError = await s.state.buildActionModeState(page, elements);
-              return {
+              const dialogs = s.browser.consumeDialogMessages();
+              const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
                 success: false,
                 stepsCompleted,
                 totalSteps: steps.length,
@@ -191,29 +181,12 @@ class BatchExecutorImpl implements BatchExecutor {
                   stateAtError,
                 },
               };
+              if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+              return earlyResult;
             }
 
-            if (resolved.selector) {
-              await page.locator(resolved.selector).fill(value);
-            } else if (resolved.name) {
-              await page.locator(`[name="${escapeAttrValue(resolved.name)}"]`).fill(value);
-            } else if (resolved.placeholder) {
-              await page.getByPlaceholder(resolved.placeholder).fill(value);
-            } else {
-              const stateAtError = await s.state.buildActionModeState(page, elements);
-              return {
-                success: false,
-                stepsCompleted,
-                totalSteps: steps.length,
-                finalState: stateAtError,
-                diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
-                error: {
-                  stepIndex: i,
-                  message: `fill_form: Cannot identify the field for "${label}".`,
-                  stateAtError,
-                },
-              };
-            }
+            const locator = resolveLocator(page, resolved);
+            await locator.fill(value);
 
           }
 
@@ -231,7 +204,8 @@ class BatchExecutorImpl implements BatchExecutor {
               .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
               .join('\n');
             const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
+            const dialogs = s.browser.consumeDialogMessages();
+            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
               success: false,
               stepsCompleted,
               totalSteps: steps.length,
@@ -243,13 +217,16 @@ class BatchExecutorImpl implements BatchExecutor {
                 stateAtError,
               },
             };
+            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+            return earlyResult;
           }
 
           // Ambiguous match is treated as an error
           if ('candidates' in resolved) {
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
+            const dialogs = s.browser.consumeDialogMessages();
+            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
               success: false,
               stepsCompleted,
               totalSteps: steps.length,
@@ -261,30 +238,16 @@ class BatchExecutorImpl implements BatchExecutor {
                 stateAtError,
               },
             };
+            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+            return earlyResult;
           }
 
-          if (resolved.selector) {
-            await page.locator(resolved.selector).selectOption(step.value ?? '');
-          } else if (resolved.name) {
-            await page.locator(`select[name="${escapeAttrValue(resolved.name)}"]`).selectOption(step.value ?? '');
-          } else {
-            const stateAtError = await s.state.buildActionModeState(page, elements);
-            return {
-              success: false,
-              stepsCompleted,
-              totalSteps: steps.length,
-              finalState: stateAtError,
-              diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
-              error: {
-                stepIndex: i,
-                message: `Cannot identify the select field for "${step.label}". A name attribute is required.`,
-                stateAtError,
-              },
-            };
-          }
+          const locator = resolveLocator(page, resolved);
+          await locator.selectOption(step.value ?? '');
 
         } else if (step.action === 'navigate') {
-          await page.goto(step.url ?? '', { waitUntil: 'domcontentloaded' });
+          await s.browser.navigateTo(step.url ?? '');
+          await s.browser.waitForSpaReady(page);
           // Auto-load profile for the navigated domain
           try {
             const navigatedUrl = page.url();
@@ -304,7 +267,8 @@ class BatchExecutorImpl implements BatchExecutor {
           // Unknown action
           const elements = await s.elements.scan(page);
           const stateAtError = await s.state.buildActionModeState(page, elements);
-          return {
+          const dialogs = s.browser.consumeDialogMessages();
+          const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
             success: false,
             stepsCompleted,
             totalSteps: steps.length,
@@ -316,6 +280,8 @@ class BatchExecutorImpl implements BatchExecutor {
               stateAtError,
             },
           };
+          if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+          return earlyResult;
         }
 
         // After each step: wait for DOM to settle and re-scan elements (fill_form handles this internally via continue)
@@ -329,7 +295,8 @@ class BatchExecutorImpl implements BatchExecutor {
         const stateAtError = await s.state.buildActionModeState(page, elements);
         const urlNow = page.url();
         const snapshotNow = await s.differ.takeSnapshot(page, zones).catch(() => snapshotBefore);
-        return {
+        const dialogs = s.browser.consumeDialogMessages();
+        const catchResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
           success: false,
           stepsCompleted,
           totalSteps: steps.length,
@@ -341,6 +308,10 @@ class BatchExecutorImpl implements BatchExecutor {
             stateAtError,
           },
         };
+        if (dialogs.length > 0) {
+          catchResult.dialogs = dialogs;
+        }
+        return catchResult;
       }
     }
 
@@ -350,14 +321,19 @@ class BatchExecutorImpl implements BatchExecutor {
     const elements = await s.elements.scan(page);
     const finalState = await s.state.buildActionModeState(page, elements);
     const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
+    const dialogs = s.browser.consumeDialogMessages();
 
-    return {
+    const result: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
       success: true,
       stepsCompleted,
       totalSteps: steps.length,
       finalState,
       diff,
     };
+    if (dialogs.length > 0) {
+      result.dialogs = dialogs;
+    }
+    return result;
   }
 }
 

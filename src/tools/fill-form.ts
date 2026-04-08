@@ -1,9 +1,5 @@
 import type { Services, AmbiguousMatch } from '../types.js';
-
-// Escape special characters in CSS attribute values (e.g. name attribute)
-function escapeAttrValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+import { resolveLocator } from '../core/locator-helper.js';
 
 export async function fillForm(
   s: Services,
@@ -69,23 +65,9 @@ export async function fillForm(
       );
     }
 
-    // Fill the field (use selector directly if available)
-    if (resolved.selector) {
-      await page.locator(resolved.selector).fill(value);
-    } else if (resolved.name) {
-      await page.locator(`[name="${escapeAttrValue(resolved.name)}"]`).fill(value);
-    } else if (resolved.placeholder) {
-      await page.getByPlaceholder(resolved.placeholder).fill(value);
-    } else {
-      return JSON.stringify(
-        {
-          error: `Cannot identify the field for "${label}". A name or placeholder attribute is required.`,
-          filledFields,
-        },
-        null,
-        2,
-      );
-    }
+    // Fill the field
+    const locator = resolveLocator(page, resolved);
+    await locator.fill(value);
 
     // Wait for DOM to settle (SPA support)
     await page.waitForTimeout(500);
@@ -99,5 +81,10 @@ export async function fillForm(
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);
 
   const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
-  return JSON.stringify(diff, null, 2);
+  const responseJson = JSON.stringify(diff, null, 2);
+  const dialogs = s.browser.consumeDialogMessages();
+  if (dialogs.length > 0) {
+    return JSON.stringify({ ...JSON.parse(responseJson), dialogs }, null, 2);
+  }
+  return responseJson;
 }

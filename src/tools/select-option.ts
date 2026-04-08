@@ -1,9 +1,5 @@
 import type { Services, AmbiguousMatch } from '../types.js';
-
-// Escape special characters in CSS attribute values (e.g. name attribute)
-function escapeAttrValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+import { resolveLocator } from '../core/locator-helper.js';
 
 export async function selectOption(
   s: Services,
@@ -35,16 +31,9 @@ export async function selectOption(
     return JSON.stringify(resolved as AmbiguousMatch, null, 2);
   }
 
-  // Select the option (use selector directly if available)
-  if (resolved.selector) {
-    await page.locator(resolved.selector).selectOption(params.value);
-  } else if (resolved.name) {
-    await page.locator(`select[name="${escapeAttrValue(resolved.name)}"]`).selectOption(params.value);
-  } else {
-    throw new Error(
-      `Cannot identify the select field for "${params.label}". A name attribute is required.`,
-    );
-  }
+  // Select the option
+  const locator = resolveLocator(page, resolved);
+  await locator.selectOption(params.value);
 
   // Wait for DOM to settle (SPA support)
   await page.waitForTimeout(500);
@@ -55,5 +44,10 @@ export async function selectOption(
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);
 
   const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
-  return JSON.stringify(diff, null, 2);
+  const responseJson = JSON.stringify(diff, null, 2);
+  const dialogs = s.browser.consumeDialogMessages();
+  if (dialogs.length > 0) {
+    return JSON.stringify({ ...JSON.parse(responseJson), dialogs }, null, 2);
+  }
+  return responseJson;
 }

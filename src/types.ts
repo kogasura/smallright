@@ -26,9 +26,10 @@ export interface InteractiveElement {
   disabled: boolean;
   zone?: string;
   selector?: string;      // CSS selector that uniquely identifies this element (internal use only)
+  scanIndex?: number;     // index in scan result array (internal use only, nth-based fallback)
 }
 
-export type PublicElement = Omit<InteractiveElement, "ref" | "selector">;
+export type PublicElement = Omit<InteractiveElement, "ref" | "selector" | "scanIndex">;
 
 // Page state
 export interface ActionModeState {
@@ -91,6 +92,8 @@ export interface AmbiguousMatch {
 export interface BrowserManager {
   getPage(): Promise<import('playwright').Page>;
   navigateTo(url: string): Promise<void>;
+  waitForSpaReady(page: import('playwright').Page): Promise<void>;
+  consumeDialogMessages(): Array<{ type: string; message: string }>;
   close(): Promise<void>;
 }
 

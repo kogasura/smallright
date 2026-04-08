@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import type { ElementRegistry, InteractiveElement, AmbiguousMatch } from '../types.js';
 
-const INTERACTIVE_SELECTOR = [
+export const INTERACTIVE_SELECTOR = [
   'a',
   'button',
   'input',
@@ -78,27 +78,8 @@ class ElementRegistryImpl implements ElementRegistry {
           value = (htmlEl as HTMLInputElement).value || undefined;
         }
 
-        // Generate a unique selector for this element
-        let selector: string;
-        if (id) {
-          selector = `#${CSS.escape(id)}`;
-        } else {
-          // Build a unique selector using tagName + :nth-of-type
-          const tagName = htmlEl.tagName.toLowerCase();
-          const parent = htmlEl.parentElement;
-          if (parent) {
-            const siblings = Array.from(parent.querySelectorAll(`:scope > ${tagName}`));
-            const nthIndex = siblings.indexOf(htmlEl) + 1;
-            // Rather than building a full parent path, use a data attribute for global uniqueness
-            selector = `${tagName}:nth-of-type(${nthIndex})`;
-          } else {
-            selector = tagName;
-          }
-          // Set a data attribute on the element and use it as the selector for global uniqueness
-          const dataRef = `e${i + 1}`;
-          htmlEl.setAttribute('data-smallright-ref', dataRef);
-          selector = `[data-smallright-ref="${dataRef}"]`;
-        }
+        // Generate a unique selector for this element (ID-based only; no DOM mutation)
+        const selector: string | undefined = id ? `#${CSS.escape(id)}` : undefined;
 
         return {
           ref: `e${i + 1}`,
@@ -116,7 +97,10 @@ class ElementRegistryImpl implements ElementRegistry {
       }).filter((el): el is NonNullable<typeof el> => el !== null);
     }, INTERACTIVE_SELECTOR);
 
-    return elements as InteractiveElement[];
+    // Assign ref and scanIndex after filtering (ref must be sequential after null removal)
+    const withIndex = elements.map((el, idx) => ({ ...el, ref: `e${idx + 1}`, scanIndex: idx }));
+
+    return withIndex as InteractiveElement[];
   }
 
   resolveByText(

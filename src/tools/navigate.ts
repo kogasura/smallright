@@ -13,7 +13,13 @@ export async function navigate(
     s.zones.setZones(profile.zones);
   }
 
+  await s.browser.waitForSpaReady(page);
   const elements = await s.elements.scan(page);
   const state = await s.state.buildActionModeState(page, elements);
-  return JSON.stringify(state, null, 2);
+  const responseJson = JSON.stringify(state, null, 2);
+  const dialogs = s.browser.consumeDialogMessages();
+  if (dialogs.length > 0) {
+    return JSON.stringify({ ...JSON.parse(responseJson), dialogs }, null, 2);
+  }
+  return responseJson;
 }
