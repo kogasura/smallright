@@ -53,13 +53,18 @@ export async function readTable(
       });
     }
 
-    // Convert each tbody row to an object
+    // Identify columns to skip (empty headers = checkbox/action columns)
+    const skipColumns = new Set<number>();
+    headers.forEach((h, i) => { if (h === '') skipColumns.add(i); });
+
+    // Convert each tbody row to an object, skipping empty-header columns
     const result: Record<string, string>[] = [];
     const bodyRows = table.querySelectorAll('tbody tr');
     bodyRows.forEach((row) => {
       const cells = row.querySelectorAll('td, th');
       const rowObj: Record<string, string> = {};
       cells.forEach((cell, index) => {
+        if (skipColumns.has(index)) return;
         const key = headers[index] ?? String(index);
         rowObj[key] = (cell as HTMLElement).innerText?.trim() ?? cell.textContent?.trim() ?? '';
       });
@@ -73,14 +78,18 @@ export async function readTable(
         firstRow.querySelectorAll('td, th').forEach((cell, index) => {
           headers[index] = (cell as HTMLElement).innerText?.trim() ?? cell.textContent?.trim() ?? String(index);
         });
+        // Re-identify skip columns
+        skipColumns.clear();
+        headers.forEach((h, i) => { if (h === '') skipColumns.add(i); });
         // Re-parse excluding the header row
         result.length = 0;
         const allRows = table.querySelectorAll('tr');
         allRows.forEach((row, rowIndex) => {
-          if (rowIndex === 0) return; // skip header row
+          if (rowIndex === 0) return;
           const cells = row.querySelectorAll('td, th');
           const rowObj: Record<string, string> = {};
           cells.forEach((cell, index) => {
+            if (skipColumns.has(index)) return;
             const key = headers[index] ?? String(index);
             rowObj[key] = (cell as HTMLElement).innerText?.trim() ?? cell.textContent?.trim() ?? '';
           });
