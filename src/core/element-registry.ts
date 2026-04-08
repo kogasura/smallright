@@ -93,8 +93,39 @@ class ElementRegistryImpl implements ElementRegistry {
           value = (htmlEl as HTMLInputElement).value || undefined;
         }
 
-        // Generate a unique selector for this element (ID-based only; no DOM mutation)
-        const selector: string | undefined = id ? `#${CSS.escape(id)}` : undefined;
+        // Generate a unique CSS selector for this element (no DOM mutation)
+        let selector: string | undefined;
+        if (id) {
+          selector = `#${CSS.escape(id)}`;
+        } else {
+          // Build a path-based selector: tag:nth-of-type(n) chain up to a unique ancestor
+          const parts: string[] = [];
+          let current: Element | null = htmlEl;
+          while (current && current !== document.body && current !== document.documentElement) {
+            const cTag = current.tagName.toLowerCase();
+            const cId = current.getAttribute('id');
+            if (cId) {
+              parts.unshift(`#${CSS.escape(cId)}`);
+              break;
+            }
+            const parent: Element | null = current.parentElement;
+            if (parent) {
+              const siblings = Array.from(parent.children).filter((c: Element) => c.tagName.toLowerCase() === cTag);
+              if (siblings.length === 1) {
+                parts.unshift(cTag);
+              } else {
+                const idx = siblings.indexOf(current) + 1;
+                parts.unshift(`${cTag}:nth-of-type(${idx})`);
+              }
+            } else {
+              parts.unshift(cTag);
+            }
+            current = parent;
+          }
+          if (parts.length > 0) {
+            selector = parts.join(' > ');
+          }
+        }
 
         return {
           ref: `e${i + 1}`,
