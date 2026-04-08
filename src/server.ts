@@ -284,6 +284,14 @@ run_batch(steps) executes multiple actions in a single call.`,
         .boolean()
         .optional()
         .describe("Set to true to capture the full scrollable page (only applies when zone is omitted)."),
+      format: z
+        .enum(["png", "jpeg"])
+        .optional()
+        .describe("Image format. Default: png. Use jpeg with quality to reduce token consumption."),
+      quality: z
+        .number()
+        .optional()
+        .describe("JPEG quality (1-100). Default: 50. Only effective when format is jpeg."),
     },
     (params) => wrap(() => takeScreenshot(services, params))
   );

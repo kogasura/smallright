@@ -15,7 +15,16 @@ export async function navigate(
 
   await s.browser.waitForSpaReady(page);
   const elements = await s.elements.scan(page);
-  const state = await s.state.buildActionModeState(page, elements);
+
+  // Build zone snapshots if profile was loaded (B6 fix)
+  const zoneDefs = s.zones.getZones();
+  let zoneSnapshots: import("../types.js").ZoneSnapshot[] | undefined;
+  if (zoneDefs.length > 0) {
+    zoneSnapshots = await Promise.all(
+      zoneDefs.map(z => s.zones.getZoneSnapshot(page, z.name))
+    );
+  }
+  const state = await s.state.buildActionModeState(page, elements, zoneSnapshots);
   const responseJson = JSON.stringify(state, null, 2);
   const dialogs = s.browser.consumeDialogMessages();
   if (dialogs.length > 0) {

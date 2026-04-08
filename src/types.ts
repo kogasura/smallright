@@ -76,7 +76,7 @@ export interface BatchResult {
   success: boolean;
   stepsCompleted: number;
   totalSteps: number;
-  finalState: ActionModeState;
+  finalState?: ActionModeState;
   diff: StateDiff;
   error?: { stepIndex: number; message: string; stateAtError: ActionModeState };
 }

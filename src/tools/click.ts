@@ -10,6 +10,34 @@ export async function clickElement(
 
   // Scan elements and take initial snapshot
   const elements = await s.elements.scan(page);
+
+  // Assign zone membership if zones are defined and zone param is specified (B4 fix)
+  if (params.zone && zones.length > 0) {
+    const zoneSelectors = zones.map(z => ({ name: z.name, selector: z.selector }));
+    const zoneMap = await page.evaluate(
+      (args: { selectors: Array<{ name: string; selector: string }> }) => {
+        const result: Record<number, string> = {};
+        for (const z of args.selectors) {
+          const zoneEl = document.querySelector(z.selector);
+          if (!zoneEl) continue;
+          const allInteractive = document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [onclick], [tabindex]:not([tabindex="-1"])');
+          allInteractive.forEach((el, i) => {
+            if (zoneEl.contains(el)) {
+              result[i] = z.name;
+            }
+          });
+        }
+        return result;
+      },
+      { selectors: zoneSelectors }
+    );
+    elements.forEach((el) => {
+      if (el.scanIndex !== undefined && zoneMap[el.scanIndex]) {
+        el.zone = zoneMap[el.scanIndex];
+      }
+    });
+  }
+
   const urlBefore = page.url();
   const snapshotBefore = await s.differ.takeSnapshot(page, zones);
 

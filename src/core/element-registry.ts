@@ -36,11 +36,21 @@ class ElementRegistryImpl implements ElementRegistry {
       return unique.map((el, i) => {
         const htmlEl = el as HTMLElement;
 
+        // Skip elements inside aria-hidden containers (B3)
+        if (htmlEl.closest('[aria-hidden="true"]')) {
+          return null;
+        }
+
         // Skip hidden elements (offsetParent === null and position !== 'fixed')
         const style = window.getComputedStyle(htmlEl);
         if (htmlEl.offsetParent === null && style.position !== 'fixed') {
           return null;
         }
+
+        // Skip elements outside viewport (B1 - off-screen menus, collapsed drawers)
+        const rect = htmlEl.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return null;
+        if (rect.right < 0 || rect.bottom < 0 || rect.left > window.innerWidth || rect.top > window.innerHeight) return null;
 
         // Resolve label text
         let labelText: string | undefined;
@@ -59,10 +69,13 @@ class ElementRegistryImpl implements ElementRegistry {
           }
         }
 
-        // text: prefer aria-label, fall back to innerText
+        // text: prefer aria-label, fall back to innerText, then title/data-testid/type (U4)
         const ariaLabel = htmlEl.getAttribute('aria-label');
         const innerText = htmlEl.innerText?.trim();
-        const text = ariaLabel?.trim() || innerText || '';
+        const titleAttr = htmlEl.getAttribute('title');
+        const testId = htmlEl.getAttribute('data-testid');
+        const typeAttr = htmlEl.getAttribute('type');
+        const text = ariaLabel?.trim() || innerText || titleAttr?.trim() || testId || typeAttr || '';
 
         // input type / value / placeholder / disabled
         const tag = htmlEl.tagName.toLowerCase();

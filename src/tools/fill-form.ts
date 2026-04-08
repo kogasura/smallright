@@ -81,10 +81,10 @@ export async function fillForm(
   const snapshotAfter = await s.differ.takeSnapshot(page, zones);
 
   const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
-  const responseJson = JSON.stringify(diff, null, 2);
+  const result: Record<string, unknown> = { ...diff, filledFields };
   const dialogs = s.browser.consumeDialogMessages();
   if (dialogs.length > 0) {
-    return JSON.stringify({ ...JSON.parse(responseJson), dialogs }, null, 2);
+    result.dialogs = dialogs;
   }
-  return responseJson;
+  return JSON.stringify(result, null, 2);
 }
