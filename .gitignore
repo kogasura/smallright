@@ -1,5 +1,4 @@
 node_modules/
 dist/
 *.tsbuildinfo
-docs/design.md
-docs/oss-prep.md
+docs/
