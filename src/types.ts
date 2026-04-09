@@ -64,7 +64,7 @@ export interface SiteProfile {
 
 // Batch (AI specifies elements by text/label, not by ref or selector)
 export interface BatchStep {
-  action: "click" | "fill" | "fill_form" | "select" | "navigate" | "wait";
+  action: "click" | "hover" | "fill_form" | "select" | "navigate" | "wait";
   text?: string;
   label?: string;
   value?: string;

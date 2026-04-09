@@ -2,9 +2,17 @@ import type { Services } from "../types.js";
 
 export async function readPage(
   s: Services,
-  params: { zone?: string }
+  params: { zone?: string; mode?: "action" | "visual" }
 ): Promise<string> {
   const page = await s.browser.getPage();
+
+  if (params.mode === "visual") {
+    // visual は即時 DOM 取得が目的のため waitForSpaReady は呼ばない
+    // (get_state の既存実装に合わせた動作)
+    const state = await s.state.buildVisualModeState(page);
+    return JSON.stringify(state, null, 2);
+  }
+
   const zones = s.zones.getZones();
 
   if (params.zone) {

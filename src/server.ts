@@ -9,15 +9,11 @@ import { createProfileManager } from "./core/profile-manager.js";
 import { createBatchExecutor } from "./core/batch-executor.js";
 import { navigate } from "./tools/navigate.js";
 import { readPage } from "./tools/read-page.js";
-import { getState } from "./tools/get-state.js";
 import { clickElement } from "./tools/click.js";
-import { fillField } from "./tools/fill.js";
 import { fillForm } from "./tools/fill-form.js";
 import { selectOption } from "./tools/select-option.js";
-import { setupPage } from "./tools/setup-page.js";
-import { defineZones } from "./tools/define-zones.js";
+import { configureZones } from "./tools/configure-zones.js";
 import { saveProfile } from "./tools/save-profile.js";
-import { listProfiles } from "./tools/list-profiles.js";
 import { deleteProfile } from "./tools/delete-profile.js";
 import { runBatch } from "./tools/run-batch.js";
 import { readTable } from "./tools/read-table.js";
@@ -26,10 +22,8 @@ import { evaluate } from "./tools/evaluate.js";
 import { uploadFile } from "./tools/upload-file.js";
 import { downloadFile } from "./tools/download-file.js";
 import { setViewport } from "./tools/set-viewport.js";
-import { navigateBack } from "./tools/navigate-back.js";
 import { pressKey } from "./tools/press-key.js";
 import { waitFor } from "./tools/wait-for.js";
-import { hoverElement } from "./tools/hover.js";
 import type { Services } from "./types.js";
 
 export function createMcpServer(): { server: McpServer; services: Services } {
@@ -42,31 +36,34 @@ export function createMcpServer(): { server: McpServer; services: Services } {
       instructions: `smallright — AI-Friendly Browser Automation
 
 ## Basic Flow
-1. navigate(url) — open a page, returns ActionModeState
-2. read_page() — inspect content and interactive elements
-3. click(text) / fill(label, value) / fill_form(fields) — interact with elements
+1. navigate(url) — open a page. Use navigate(back: true) to go back.
+2. read_page() — inspect content and interactive elements. Use read_page(mode: "visual") for full DOM snapshot.
+3. click(text) — click an element. Use click(text, action: "hover") to hover instead.
+4. fill_form(fields) — fill one or more form fields by label. Example: fill_form({ "Email": "user@example.com" })
+5. press_key(key) — send keyboard input (Tab, Enter, Escape, etc.)
 
 ## Targeting Elements
 - By text: click(text: "Login")
-- By label: fill(label: "Email", value: "user@example.com")
+- By label: fill_form(fields: { "Email": "user@example.com" })
 - Do not use ref IDs or CSS selectors — always use text or label
 
 ## Ambiguous Match
-If multiple elements match, a candidate list is returned. Re-call with the index parameter to select the intended element.
+If multiple elements match, a candidate list is returned. Re-call with the index parameter.
 
 ## Zones (token reduction)
-- setup_page() auto-detects zones on the page (header/main/sidebar, etc.)
+- configure_zones() auto-detects zones. Pass zones parameter to set manually.
 - read_page(zone: "main") fetches only the specified zone
-- save_profile() persists zone definitions and auto-applies them on the next visit
+- save_profile() persists zone definitions for auto-loading on next visit
+
+## Waiting
+- wait_for(text) or wait_for(selector) — wait for an element to appear
+
+## File Operations
+- upload_file(paths) — set files on input[type=file]
+- download_file(text) — click to download, returns filename/size/preview
 
 ## Batch Execution
-run_batch(steps) executes multiple actions in a single call.
-
-## File Upload
-upload_file(paths) — set files on an input[type=file]. Identify the input by label or selector.
-
-## File Download
-download_file(text) — click an element to trigger a download. Returns filename, size, and text preview. Use save_path to persist the file.`,
+run_batch(steps) executes multiple actions in a single call.`,
     }
   );
 
@@ -100,9 +97,10 @@ download_file(text) — click an element to trigger a download. Returns filename
   // ── navigate ──
   server.tool(
     "navigate",
-    "Navigate to the specified URL and return a list of interactive elements.",
+    "Navigate to a URL or go back in history. Returns ActionModeState with interactive elements.",
     {
-      url: z.string().describe("URL to navigate to (e.g. https://example.com)"),
+      url: z.string().optional().describe("URL to navigate to"),
+      back: z.boolean().optional().describe("Set to true to go back in history (mutually exclusive with url)"),
     },
     (params) => wrap(() => navigate(services, params))
   );
@@ -110,62 +108,34 @@ download_file(text) — click an element to trigger a download. Returns filename
   // ── read_page ──
   server.tool(
     "read_page",
-    "Retrieve interactive elements and content of the current page. Use after navigate or any action to check the current state. Supports zone filtering to reduce token usage.",
+    "Retrieve interactive elements and content of the current page. Supports zone filtering and visual mode.",
     {
-      zone: z
-        .string()
-        .optional()
-        .describe(
-          "Zone name to fetch (e.g. main, header). Omit to retrieve the full page."
-        ),
+      zone: z.string().optional().describe("Zone name to fetch (e.g. main, header). Omit for full page."),
+      mode: z.enum(["action", "visual"]).optional().describe("action (default): interactive elements. visual: full DOM snapshot."),
     },
     (params) => wrap(() => readPage(services, params))
-  );
-
-  // ── get_state ──
-  server.tool(
-    "get_state",
-    "Fallback tool to retrieve the raw page state. mode: action returns a list of interactive elements; mode: visual returns the full DOM. Prefer navigate / read_page for normal use.",
-    {
-      mode: z
-        .enum(["action", "visual"])
-        .describe(
-          "action: interactive element list (token-efficient), visual: full DOM (for detailed inspection)"
-        ),
-    },
-    (params) => wrap(() => getState(services, params))
   );
 
   // ── click ──
   server.tool(
     "click",
-    "Click an element identified by text. Returns a StateDiff of changed zones after the action. If multiple elements match, returns AmbiguousMatch — check candidates and re-call with the index parameter.",
+    "Click or hover an element identified by text. Returns StateDiff. Use action: 'hover' for tooltips/menus.",
     {
-      text: z.string().describe("Text of the element to click (button label, link text, etc.)"),
-      role: z.string().optional().describe("Element role (e.g. button, link). Improves match accuracy when specified."),
-      zone: z.string().optional().describe("Zone name to search in. Omit to search all zones."),
-      index: z.number().optional().describe("Index to select a specific candidate from AmbiguousMatch (0-based)."),
+      text: z.string().describe("Text of the element"),
+      action: z.enum(["click", "hover"]).optional().describe("Action to perform (default: click)"),
+      role: z.string().optional().describe("Element role (e.g. button, link)"),
+      zone: z.string().optional().describe("Zone to search in"),
+      index: z.number().optional().describe("Disambiguation index for AmbiguousMatch"),
     },
     (params) => wrap(() => clickElement(services, params))
-  );
-
-  // ── fill ──
-  server.tool(
-    "fill",
-    "Fill a field identified by label. Returns a StateDiff of changed zones after the action. Returns AmbiguousMatch if multiple fields match.",
-    {
-      label: z.string().describe("Label text of the input field (<label>, aria-label, placeholder, etc.)"),
-      value: z.string().describe("Value to enter"),
-    },
-    (params) => wrap(() => fillField(services, params))
   );
 
   // ── fill_form ──
   server.tool(
     "fill_form",
-    "Fill multiple form fields at once using a label-to-value map. Returns a StateDiff after all fields are filled. If a field cannot be matched, returns the filled fields so far along with error details.",
+    "Fill one or more form fields by label. Returns StateDiff and list of filled fields.",
     {
-      fields: z.record(z.string(), z.string()).describe("Map of label to value (e.g. { \"Email\": \"user@example.com\", \"Password\": \"secret\" })"),
+      fields: z.record(z.string(), z.string()).describe("Map of label to value (e.g. { \"Email\": \"user@example.com\" })"),
     },
     (params) => wrap(() => fillForm(services, params))
   );
@@ -173,54 +143,38 @@ download_file(text) — click an element to trigger a download. Returns filename
   // ── select_option ──
   server.tool(
     "select_option",
-    "Select an option in a dropdown identified by label. Returns a StateDiff of changed zones after the action.",
+    "Select a dropdown option by label. Returns StateDiff.",
     {
-      label: z.string().describe("Label text of the select field"),
-      value: z.string().describe("Option value attribute or display text to select"),
+      label: z.string().describe("Label of the select field"),
+      value: z.string().describe("Option value or text to select"),
     },
     (params) => wrap(() => selectOption(services, params))
   );
 
-  // ── setup_page ──
+  // ── configure_zones ──
   server.tool(
-    "setup_page",
-    "Auto-detect zones on the current page and return ZoneDefinition[]. Run this on the first visit or before save_profile. Review or adjust the results with define_zones before saving, or pass them directly to save_profile.",
-    {},
-    (_params) => wrap(() => setupPage(services, _params as Record<string, never>))
-  );
-
-  // ── define_zones ──
-  server.tool(
-    "define_zones",
-    "Manually specify zone definitions and apply them to the current session. Use this to adjust setup_page results or to explicitly configure site-specific zones.",
+    "configure_zones",
+    "Auto-detect or manually set page zones for token reduction. Returns ZoneDefinition[]. Use save_profile() to persist.",
     {
       zones: z.array(
         z.object({
-          name: z.string().describe("Zone name (e.g. header, main, sidebar, footer)"),
-          selector: z.string().describe("CSS selector (e.g. #main, .content, main)"),
-          description: z.string().optional().describe("Optional description of the zone"),
+          name: z.string(),
+          selector: z.string(),
+          description: z.string().optional(),
         })
-      ).describe("Array of zone definitions"),
+      ).optional().describe("Zone definitions to set. Omit to auto-detect."),
     },
-    (params) => wrap(() => defineZones(services, params))
+    (params) => wrap(() => configureZones(services, params))
   );
 
   // ── save_profile ──
   server.tool(
     "save_profile",
-    "Save the current zone definitions to a file associated with the domain. Run after finalizing zones with setup_page or define_zones. The profile is auto-loaded on the next navigate.",
+    "Persist current zone definitions for the domain. Auto-loaded on next navigate.",
     {
-      domain: z.string().optional().describe("Domain to save to (e.g. example.com). Defaults to the current page hostname."),
+      domain: z.string().optional().describe("Domain (defaults to current page hostname)"),
     },
     (params) => wrap(() => saveProfile(services, params))
-  );
-
-  // ── list_profiles ──
-  server.tool(
-    "list_profiles",
-    "Return a list of saved site profiles.",
-    {},
-    (_params) => wrap(() => listProfiles(services, _params as Record<string, never>))
   );
 
   // ── delete_profile ──
@@ -241,7 +195,7 @@ download_file(text) — click an element to trigger a download. Returns filename
       steps: z.array(
         z.object({
           action: z
-            .enum(["click", "fill", "fill_form", "select", "navigate", "wait"])
+            .enum(["click", "hover", "fill_form", "select", "navigate", "wait"])
             .describe("Type of action to perform"),
           text: z.string().optional().describe("click: text of the element to click"),
           label: z
@@ -362,14 +316,6 @@ download_file(text) — click an element to trigger a download. Returns filename
     (params) => wrap(() => setViewport(services, params))
   );
 
-  // ── navigate_back ──
-  server.tool(
-    "navigate_back",
-    "Navigate back to the previous page in browser history. Returns ActionModeState of the previous page.",
-    {},
-    (_params) => wrap(() => navigateBack(services, _params as Record<string, never>))
-  );
-
   // ── press_key ──
   server.tool(
     "press_key",
@@ -390,19 +336,6 @@ download_file(text) — click an element to trigger a download. Returns filename
       timeout:  z.number().optional().describe("Max wait time in ms (default: 10000)"),
     },
     (params) => wrap(() => waitFor(services, params))
-  );
-
-  // ── hover ──
-  server.tool(
-    "hover",
-    "Hover over an element identified by text. Returns a StateDiff of changed zones after the action. If multiple elements match, returns AmbiguousMatch — check candidates and re-call with the index parameter.",
-    {
-      text:  z.string().describe("Text of the element to hover"),
-      role:  z.string().optional().describe("Element role for better matching"),
-      zone:  z.string().optional().describe("Zone name to search in"),
-      index: z.number().optional().describe("Disambiguation index for AmbiguousMatch (0-based)"),
-    },
-    (params) => wrap(() => hoverElement(services, params))
   );
 
   return { server, services };

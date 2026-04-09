@@ -3,7 +3,7 @@ import { resolveLocator } from '../core/locator-helper.js';
 
 export async function clickElement(
   s: Services,
-  params: { text: string; role?: string; zone?: string; index?: number },
+  params: { text: string; role?: string; zone?: string; index?: number; action?: "click" | "hover" },
 ): Promise<string> {
   const page = await s.browser.getPage();
   const zones = s.zones.getZones();
@@ -56,15 +56,20 @@ export async function clickElement(
     return JSON.stringify(resolved as AmbiguousMatch, null, 2);
   }
 
-  // Click the element
+  // Click or hover the element
   const locator = resolveLocator(page, resolved);
-  await locator.click({ timeout: 10000 });
-
-  // Wait for navigation if it occurs (SPA pushState), but don't block if no navigation
-  try {
-    await page.waitForURL((url) => url.toString() !== urlBefore, { timeout: 2000 });
-  } catch {
-    // No navigation occurred — e.g. modal open, dropdown toggle. Continue.
+  if (params.action === "hover") {
+    // hover path: skip waitForURL (no navigation expected)
+    await locator.hover({ timeout: 10000 });
+  } else {
+    // click path (default)
+    await locator.click({ timeout: 10000 });
+    // Wait for navigation if it occurs (SPA pushState), but don't block if no navigation
+    try {
+      await page.waitForURL((url) => url.toString() !== urlBefore, { timeout: 2000 });
+    } catch {
+      // No navigation occurred — e.g. modal open, dropdown toggle. Continue.
+    }
   }
   // Brief DOM stabilization wait
   await page.waitForTimeout(300);

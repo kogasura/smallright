@@ -76,16 +76,18 @@ class BatchExecutorImpl implements BatchExecutor {
           const locator = resolveLocator(page, resolved);
           await locator.click({ timeout: 10000 });
 
-        } else if (step.action === 'fill') {
-          // Resolve field by label and fill
+        } else if (step.action === 'hover') {
+          // Resolve element by text and hover
           const elements = await s.elements.scan(page);
-          const resolved = s.elements.resolveByLabel(step.label ?? '', elements);
+          const resolved = s.elements.resolveByText(
+            step.text ?? '',
+            elements,
+            undefined,
+            undefined,
+          );
 
           if (resolved === null) {
-            const allLabels = elements
-              .filter((e) => ['input', 'select', 'textarea'].includes(e.tag))
-              .map((e) => `- ${e.label ?? e.placeholder ?? e.text ?? e.name ?? '(unknown)'} (${e.tag})`)
-              .join('\n');
+            const allTexts = elements.map((e) => `- ${e.text} (${e.tag})`).join('\n');
             const stateAtError = await s.state.buildActionModeState(page, elements);
             const dialogs = s.browser.consumeDialogMessages();
             const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
@@ -96,7 +98,7 @@ class BatchExecutorImpl implements BatchExecutor {
               diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
               error: {
                 stepIndex: i,
-                message: `No field matching "${step.label}" was found.\n\nForm fields on the page:\n${allLabels}`,
+                message: `No element matching "${step.text}" was found.\n\nInteractive elements on the page:\n${allTexts}`,
                 stateAtError,
               },
             };
@@ -126,7 +128,11 @@ class BatchExecutorImpl implements BatchExecutor {
           }
 
           const locator = resolveLocator(page, resolved);
-          await locator.fill(step.value ?? '');
+          await locator.hover({ timeout: 10000 });
+          // waitForURL is skipped for hover (no navigation expected)
+          await page.waitForTimeout(300);
+          stepsCompleted++;
+          continue;
 
         } else if (step.action === 'fill_form') {
           // Fill each field in the form sequentially
