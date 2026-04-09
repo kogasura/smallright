@@ -1,19 +1,19 @@
 import type { Page } from 'playwright';
 import type { StateDiffer, StateDiff, ZoneDefinition, ZoneSnapshot } from '../types.js';
 
-// djb2ハッシュ（軽量な差分検出用）
+// djb2 hash (lightweight, used for change detection)
 function djb2Hash(text: string): string {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) {
     hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
-    hash = hash >>> 0; // 符号なし32bit
+    hash = hash >>> 0; // unsigned 32-bit
   }
   return hash.toString(16);
 }
 
 class StateDifferImpl implements StateDiffer {
   async takeSnapshot(page: Page, zones: ZoneDefinition[]): Promise<ZoneSnapshot[]> {
-    // ゾーンが未設定の場合はページ全体を1ゾーンとして扱う
+    // If no zones are defined, treat the entire page as a single zone
     const effectiveZones: ZoneDefinition[] =
       zones.length > 0 ? zones : [{ name: '_page', selector: 'body' }];
 
@@ -30,7 +30,7 @@ class StateDifferImpl implements StateDiffer {
         name: zone.name,
         textContent,
         contentHash: djb2Hash(textContent),
-        interactiveElements: [], // 差分検出にはtextContentのハッシュのみ使用
+        interactiveElements: [], // only textContent hash is used for diff detection
       };
     });
     return snapshots;
@@ -59,7 +59,7 @@ class StateDifferImpl implements StateDiffer {
       }
     }
 
-    // before にあって after にない場合は変更扱い（削除されたゾーン）
+    // Zones present in before but absent in after are treated as changed (removed)
     for (const [name, beforeZone] of beforeMap) {
       if (!afterMap.has(name)) {
         changedZones.push({ ...beforeZone, textContent: '', contentHash: '' });

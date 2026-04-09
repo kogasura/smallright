@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import type { ZoneDefinition, ZoneSnapshot, ZoneManager, InteractiveElement } from '../types.js';
 
-// djb2ハッシュ（state-differと同じアルゴリズム）
+// djb2 hash (same algorithm as state-differ)
 function djb2Hash(text: string): string {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) {
@@ -15,40 +15,38 @@ class ZoneManagerImpl implements ZoneManager {
   private zones: ZoneDefinition[] = [];
 
   async autoDetect(page: Page): Promise<ZoneDefinition[]> {
-    // 1回のpage.evaluate()で全ヒューリスティックを実行
+    // Run all heuristics in a single page.evaluate() call
     const detected = await page.evaluate((): Array<{ name: string; selector: string }> => {
       const results: Array<{ name: string; selector: string }> = [];
       const seenElements = new Set<Element>();
 
-      // ユニークなCSSセレクタを生成するヘルパー
+      // Helper to build a unique CSS selector for an element
       function buildSelector(el: Element): string {
-        // IDがある場合はID優先
+        // Prefer ID if available
         if (el.id) {
           return `#${CSS.escape(el.id)}`;
         }
-        // セマンティックタグはそのまま使う（body直下でなくても使える）
+        // Use semantic tag names directly (works even when not a direct child of body)
         const tag = el.tagName.toLowerCase();
         const semanticTags = new Set(['header', 'nav', 'main', 'aside', 'footer']);
         if (semanticTags.has(tag)) {
-          // 同名タグが複数ある場合はnth-of-typeで区別
-          // nth-of-type は同じ親の中での兄弟要素が基準なので parentElement.children から算出する
+          // Use nth-of-type to disambiguate when the same tag appears multiple times
           const parent = el.parentElement ?? document.documentElement;
           const siblings = Array.from(parent.children).filter(c => c.tagName.toLowerCase() === tag);
           if (siblings.length === 1) return tag;
           const idx = siblings.indexOf(el as HTMLElement);
           return `${tag}:nth-of-type(${idx + 1})`;
         }
-        // classがある場合
+        // Use class names if they uniquely identify the element
         if (el.classList.length > 0) {
           const cls = Array.from(el.classList).map(c => `.${CSS.escape(c)}`).join('');
           const candidates = document.querySelectorAll(cls);
           if (candidates.length === 1) return cls;
-          // 絞り込みのためにtagも付ける
           const tagCls = `${tag}${cls}`;
           const tagCandidates = document.querySelectorAll(tagCls);
           if (tagCandidates.length === 1) return tagCls;
         }
-        // role属性
+        // Use role attribute
         const role = el.getAttribute('role');
         if (role) {
           const roleSel = `[role="${role}"]`;
@@ -58,7 +56,7 @@ class ZoneManagerImpl implements ZoneManager {
           const tagRoleCandidates = document.querySelectorAll(tagRoleSel);
           if (tagRoleCandidates.length === 1) return tagRoleSel;
         }
-        // フォールバック: 親要素を辿ってパスを構築
+        // Fallback: build path by traversing parent elements
         const parent = el.parentElement;
         if (parent && parent !== document.documentElement) {
           const parentSel = buildSelector(parent);
@@ -76,21 +74,21 @@ class ZoneManagerImpl implements ZoneManager {
         results.push({ name, selector: buildSelector(el) });
       }
 
-      // 1. セマンティックHTML
+      // 1. Semantic HTML elements
       addZone('header', document.querySelector('header'));
       addZone('nav', document.querySelector('nav'));
       addZone('main', document.querySelector('main'));
       addZone('aside', document.querySelector('aside'));
       addZone('footer', document.querySelector('footer'));
 
-      // 2. ARIAランドマーク
+      // 2. ARIA landmark roles
       addZone('header', document.querySelector('[role="banner"]'));
       addZone('nav', document.querySelector('[role="navigation"]'));
       addZone('main', document.querySelector('[role="main"]'));
       addZone('aside', document.querySelector('[role="complementary"]'));
       addZone('footer', document.querySelector('[role="contentinfo"]'));
 
-      // 3. 一般的なCSS class/ID
+      // 3. Common CSS class/ID patterns
       const cssPatterns: Array<[string, string]> = [
         ['header', '#header'],
         ['nav', '.navbar'],
@@ -111,7 +109,7 @@ class ZoneManagerImpl implements ZoneManager {
         addZone(name, document.querySelector(selector));
       }
 
-      // 4. 最終フォールバック: ゾーンが1つも検出できなかった場合はbody全体
+      // 4. Final fallback: if no zones detected, use the entire body as 'main'
       if (results.length === 0) {
         results.push({ name: 'main', selector: 'body' });
       }
@@ -119,7 +117,7 @@ class ZoneManagerImpl implements ZoneManager {
       return results;
     });
 
-    // 重複排除: 同じnameが複数ある場合は先に登録されたもの（優先度高）を残す
+    // Deduplicate: keep only the first entry for each zone name (highest priority)
     const seenNames = new Set<string>();
     const zones: ZoneDefinition[] = [];
     for (const z of detected) {
@@ -129,7 +127,7 @@ class ZoneManagerImpl implements ZoneManager {
       }
     }
 
-    // 検出結果をキャッシュにセット
+    // Cache the detected zones
     this.zones = zones;
     return zones;
   }
@@ -145,7 +143,7 @@ class ZoneManagerImpl implements ZoneManager {
   async getZoneSnapshot(page: Page, zoneName: string): Promise<ZoneSnapshot> {
     const zone = this.zones.find(z => z.name === zoneName);
     if (!zone) {
-      throw new Error(`ゾーン "${zoneName}" が見つかりません。利用可能なゾーン: ${this.zones.map(z => z.name).join(', ')}`);
+      throw new Error(`Zone "${zoneName}" not found. Available zones: ${this.zones.map(z => z.name).join(', ')}`);
     }
 
     const { textContent, elements } = await page.evaluate((selector: string) => {
@@ -154,7 +152,7 @@ class ZoneManagerImpl implements ZoneManager {
 
       const text = (el as HTMLElement).innerText ?? el.textContent ?? '';
 
-      // ゾーン内のインタラクティブ要素を収集
+      // Collect interactive elements within the zone
       const interactiveSels = 'button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [role="textbox"], [role="combobox"]';
       const elems = Array.from(el.querySelectorAll(interactiveSels)).map((node, idx) => {
         const tag = node.tagName.toLowerCase();
@@ -167,7 +165,7 @@ class ZoneManagerImpl implements ZoneManager {
         const disabled = (node as HTMLButtonElement).disabled ?? false;
         const nodeText = (node as HTMLElement).innerText?.trim() ?? node.textContent?.trim() ?? ariaLabel;
 
-        // labelの取得
+        // Resolve label text
         let labelText: string | undefined;
         const id = node.getAttribute('id');
         if (id) {
@@ -177,7 +175,7 @@ class ZoneManagerImpl implements ZoneManager {
         if (!labelText) {
           const closestLabel = node.closest('label');
           if (closestLabel) {
-            // label内のinput自体のテキストを除いたテキストを取得
+            // Get label text excluding the text of nested input elements
             const clone = closestLabel.cloneNode(true) as HTMLElement;
             const inputs = clone.querySelectorAll('input, select, textarea');
             inputs.forEach(i => i.remove());

@@ -10,7 +10,7 @@ function getProfilesDir(): string {
 function sanitizeDomain(domain: string): string {
   const sanitized = domain.replace(/[^a-zA-Z0-9._-]/g, '');
   if (!sanitized || sanitized.startsWith('.') || sanitized.includes('..')) {
-    throw new Error(`不正なドメイン名: "${domain}"`);
+    throw new Error(`Invalid domain name: "${domain}"`);
   }
   return sanitized;
 }
@@ -47,7 +47,7 @@ export function createProfileManager(): ProfileManager {
         const parsed = JSON.parse(existing) as SiteProfile;
         createdAt = parsed.createdAt;
       } catch {
-        // ファイルが存在しない場合は新規作成なので createdAt = now のまま
+        // File does not exist yet; use current time as createdAt
       }
 
       const profile: SiteProfile = {
@@ -72,7 +72,7 @@ export function createProfileManager(): ProfileManager {
             const content = await fs.readFile(filePath, "utf-8");
             profiles.push(JSON.parse(content) as SiteProfile);
           } catch {
-            // 読み込み失敗したファイルはスキップ
+            // Skip files that cannot be read
           }
         }
         return profiles;

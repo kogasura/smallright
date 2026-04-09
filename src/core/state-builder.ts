@@ -13,8 +13,9 @@ const ACTION_ROLES = new Set(["button", "link", "menuitem"]);
 const FORM_TAGS = new Set(["input", "select", "textarea"]);
 const FORM_ROLES = new Set(["textbox", "combobox", "listbox", "searchbox"]);
 
-function toPublicElement(el: InteractiveElement): PublicElement {
-  const { ref: _ref, ...rest } = el;
+/** @internal */
+export function toPublicElement(el: InteractiveElement): PublicElement {
+  const { ref: _ref, selector: _sel, scanIndex: _idx, context: _ctx, ...rest } = el;
   return rest;
 }
 
@@ -28,6 +29,56 @@ function isFormElement(el: InteractiveElement): boolean {
   if (FORM_TAGS.has(el.tag)) return true;
   if (el.role && FORM_ROLES.has(el.role)) return true;
   return false;
+}
+
+/** @internal */
+export function classifyTextPattern(text: string | undefined): string {
+  if (!text || text.trim() === '') return 'repetitive';
+  // Short text composed only of digits, date chars, weekday chars → repetitive
+  if (text.length <= 20 && /^[\d年月日曜火水木金土\s:\/\-.]+$/.test(text)) return 'repetitive';
+  // Everything else is unique
+  return `unique:${text}`;
+}
+
+// Collapse groups of 10+ similar elements (same tag/role/type/disabled) into summary (U3/P3)
+/** @internal */
+export function collapseSimilar(elements: PublicElement[]): PublicElement[] {
+  if (elements.length < 10) return elements;
+
+  // Group by tag + role + type + disabled + text pattern
+  const groups = new Map<string, { items: PublicElement[]; indices: number[] }>();
+  elements.forEach((el, i) => {
+    const key = `${el.tag}|${el.role ?? ''}|${el.type ?? ''}|${el.disabled}|${classifyTextPattern(el.text)}`;
+    const group = groups.get(key);
+    if (group) { group.items.push(el); group.indices.push(i); }
+    else { groups.set(key, { items: [el], indices: [i] }); }
+  });
+
+  // Determine which indices to collapse and where to insert summaries
+  const collapsedIndices = new Set<number>();
+  const summaryAfter = new Map<number, PublicElement>(); // insert summary after this index
+  for (const [, group] of groups) {
+    if (group.items.length >= 10) {
+      const keepSet = new Set(group.indices.slice(0, 3));
+      group.indices.forEach(i => { if (!keepSet.has(i)) collapsedIndices.add(i); });
+      // Insert summary after the 3rd kept element
+      summaryAfter.set(group.indices[2], {
+        tag: group.items[0].tag,
+        text: `...and ${group.items.length - 3} more similar elements`,
+        disabled: false,
+      } as PublicElement);
+    }
+  }
+
+  // Build result preserving original order
+  const result: PublicElement[] = [];
+  elements.forEach((el, i) => {
+    if (!collapsedIndices.has(i)) result.push(el);
+    const summary = summaryAfter.get(i);
+    if (summary) result.push(summary);
+  });
+
+  return result;
 }
 
 function buildZoneSummary(zone: ZoneSnapshot): { name: string; summary: string } {
@@ -46,13 +97,13 @@ async function buildActionModeState(
   const zoneList =
     zones && zones.length > 0 ? zones.map(buildZoneSummary) : [];
 
-  const actions: PublicElement[] = elements
-    .filter(isActionElement)
-    .map(toPublicElement);
+  const actions: PublicElement[] = collapseSimilar(
+    elements.filter(isActionElement).map(toPublicElement)
+  );
 
-  const formFields: PublicElement[] = elements
-    .filter(isFormElement)
-    .map(toPublicElement);
+  const formFields: PublicElement[] = collapseSimilar(
+    elements.filter(isFormElement).map(toPublicElement)
+  );
 
   return { url, title, zones: zoneList, actions, formFields };
 }

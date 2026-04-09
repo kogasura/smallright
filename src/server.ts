@@ -9,51 +9,61 @@ import { createProfileManager } from "./core/profile-manager.js";
 import { createBatchExecutor } from "./core/batch-executor.js";
 import { navigate } from "./tools/navigate.js";
 import { readPage } from "./tools/read-page.js";
-import { getState } from "./tools/get-state.js";
 import { clickElement } from "./tools/click.js";
-import { fillField } from "./tools/fill.js";
 import { fillForm } from "./tools/fill-form.js";
 import { selectOption } from "./tools/select-option.js";
-import { setupPage } from "./tools/setup-page.js";
-import { defineZones } from "./tools/define-zones.js";
+import { configureZones } from "./tools/configure-zones.js";
 import { saveProfile } from "./tools/save-profile.js";
-import { listProfiles } from "./tools/list-profiles.js";
 import { deleteProfile } from "./tools/delete-profile.js";
 import { runBatch } from "./tools/run-batch.js";
 import { readTable } from "./tools/read-table.js";
 import { takeScreenshot } from "./tools/screenshot.js";
 import { evaluate } from "./tools/evaluate.js";
+import { uploadFile } from "./tools/upload-file.js";
+import { downloadFile } from "./tools/download-file.js";
+import { setViewport } from "./tools/set-viewport.js";
+import { pressKey } from "./tools/press-key.js";
+import { waitFor } from "./tools/wait-for.js";
 import type { Services } from "./types.js";
 
 export function createMcpServer(): { server: McpServer; services: Services } {
   const server = new McpServer(
     {
       name: "smallright",
-      version: "0.1.0",
+      version: "0.3.0",
     },
     {
       instructions: `smallright — AI-Friendly Browser Automation
 
-## 基本フロー
-1. navigate(url) でページを開く → ActionModeState が返る
-2. read_page() でコンテンツと操作可能な要素を確認
-3. click(text) / fill(label, value) / fill_form(fields) で操作
+## Basic Flow
+1. navigate(url) — open a page. Use navigate(back: true) to go back.
+2. read_page() — inspect content and interactive elements. Use read_page(mode: "visual") for full DOM snapshot.
+3. click(text) — click an element. Use click(text, action: "hover") to hover instead.
+4. fill_form(fields) — fill one or more form fields by label. Example: fill_form({ "Email": "user@example.com" })
+5. press_key(key) — send keyboard input (Tab, Enter, Escape, etc.)
 
-## 要素の指定方法
-- テキストで指定: click(text: "ログイン")
-- ラベルで指定: fill(label: "メールアドレス", value: "test@example.com")
-- ref IDやCSSセレクタは不要。テキスト/ラベルで指定すること
+## Targeting Elements
+- By text: click(text: "Login")
+- By label: fill_form(fields: { "Email": "user@example.com" })
+- Do not use ref IDs or CSS selectors — always use text or label
 
-## 曖昧マッチ時
-同名の要素が複数ある場合、候補リストが返される。index パラメータで指定して再実行すること。
+## Ambiguous Match
+If multiple elements match, a candidate list is returned. Re-call with the index parameter.
 
-## ゾーン（省トークン機能）
-- setup_page() でページのゾーン（header/main/sidebar等）を自動検出
-- read_page(zone: "main") で特定ゾーンだけ取得可能
-- save_profile() でゾーン定義を保存、次回訪問時に自動適用
+## Zones (token reduction)
+- configure_zones() auto-detects zones. Pass zones parameter to set manually.
+- read_page(zone: "main") fetches only the specified zone
+- save_profile() persists zone definitions for auto-loading on next visit
 
-## バッチ実行
-run_batch(steps) で複数操作を1回で実行可能。`,
+## Waiting
+- wait_for(text) or wait_for(selector) — wait for an element to appear
+
+## File Operations
+- upload_file(paths) — set files on input[type=file]
+- download_file(text) — click to download, returns filename/size/preview
+
+## Batch Execution
+run_batch(steps) executes multiple actions in a single call.`,
     }
   );
 
@@ -67,7 +77,7 @@ run_batch(steps) で複数操作を1回で実行可能。`,
     batch: createBatchExecutor(),
   };
 
-  // 共通のエラーハンドリングラッパー（freee-mcp-soloと同一パターン）
+  // Common error handling wrapper
   function wrap(fn: () => Promise<string>) {
     return fn()
       .then((text) => ({
@@ -77,7 +87,7 @@ run_batch(steps) で複数操作を1回で実行可能。`,
         content: [
           {
             type: "text" as const,
-            text: `エラー: ${err instanceof Error ? err.message : String(err)}`,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
         isError: true as const,
@@ -87,9 +97,10 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── navigate ──
   server.tool(
     "navigate",
-    "指定URLに遷移し、操作可能要素の一覧を返す。最初のアクションとして使用する。",
+    "Navigate to a URL or go back in history. Returns ActionModeState with interactive elements.",
     {
-      url: z.string().describe("遷移先のURL（例: https://example.com）"),
+      url: z.string().optional().describe("URL to navigate to"),
+      back: z.boolean().optional().describe("Set to true to go back in history (mutually exclusive with url)"),
     },
     (params) => wrap(() => navigate(services, params))
   );
@@ -97,62 +108,34 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── read_page ──
   server.tool(
     "read_page",
-    "現在のページの操作可能要素とコンテンツを取得する。navigate後や操作後に状態を確認するために使用する。zone指定でゾーン絞込が可能（Phase 3以降）。",
+    "Retrieve interactive elements and content of the current page. Supports zone filtering and visual mode.",
     {
-      zone: z
-        .string()
-        .optional()
-        .describe(
-          "取得対象のゾーン名（例: main, header）。省略時はページ全体を対象とする"
-        ),
+      zone: z.string().optional().describe("Zone name to fetch (e.g. main, header). Omit for full page."),
+      mode: z.enum(["action", "visual"]).optional().describe("action (default): interactive elements. visual: full DOM snapshot."),
     },
     (params) => wrap(() => readPage(services, params))
-  );
-
-  // ── get_state ──
-  server.tool(
-    "get_state",
-    "現在のページの生の状態を取得するフォールバックツール。mode: action は操作可能要素リスト、mode: visual はフルDOM。通常は navigate / read_page を使うこと。",
-    {
-      mode: z
-        .enum(["action", "visual"])
-        .describe(
-          "action: 操作可能要素リスト（トークン節約）、visual: フルDOM（詳細確認用）"
-        ),
-    },
-    (params) => wrap(() => getState(services, params))
   );
 
   // ── click ──
   server.tool(
     "click",
-    "テキストで要素を指定してクリックする。操作後の変更ゾーンを StateDiff で返す。複数要素がマッチした場合は AmbiguousMatch を返すので、candidates を確認して index を指定して再呼び出しすること。",
+    "Click or hover an element identified by text. Returns StateDiff. Use action: 'hover' for tooltips/menus.",
     {
-      text: z.string().describe("クリックする要素のテキスト（ボタンラベル、リンクテキスト等）"),
-      role: z.string().optional().describe("要素のロール（例: button, link）。指定するとマッチ精度が上がる"),
-      zone: z.string().optional().describe("検索対象ゾーン名。省略時は全ゾーンを対象とする"),
-      index: z.number().optional().describe("AmbiguousMatch 時に候補を指定するインデックス（0始まり）"),
+      text: z.string().describe("Text of the element"),
+      action: z.enum(["click", "hover"]).optional().describe("Action to perform (default: click)"),
+      role: z.string().optional().describe("Element role (e.g. button, link)"),
+      zone: z.string().optional().describe("Zone to search in"),
+      index: z.number().optional().describe("Disambiguation index for AmbiguousMatch"),
     },
     (params) => wrap(() => clickElement(services, params))
-  );
-
-  // ── fill ──
-  server.tool(
-    "fill",
-    "ラベルでフィールドを指定して値を入力する。操作後の変更ゾーンを StateDiff で返す。複数フィールドがマッチした場合は AmbiguousMatch を返す。",
-    {
-      label: z.string().describe("入力フィールドのラベルテキスト（<label>、aria-label、placeholder等）"),
-      value: z.string().describe("入力する値"),
-    },
-    (params) => wrap(() => fillField(services, params))
   );
 
   // ── fill_form ──
   server.tool(
     "fill_form",
-    "フォームの複数フィールドをラベルと値のマップで一括入力する。操作後の変更ゾーンを StateDiff で返す。途中でマッチ失敗した場合は入力済みフィールドとエラー情報を返す。",
+    "Fill one or more form fields by label. Returns StateDiff and list of filled fields.",
     {
-      fields: z.record(z.string(), z.string()).describe("ラベル→値のマップ（例: { \"メールアドレス\": \"user@example.com\", \"パスワード\": \"password\" }）"),
+      fields: z.record(z.string(), z.string()).describe("Map of label to value (e.g. { \"Email\": \"user@example.com\" })"),
     },
     (params) => wrap(() => fillForm(services, params))
   );
@@ -160,62 +143,46 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── select_option ──
   server.tool(
     "select_option",
-    "ラベルでドロップダウンを指定してオプションを選択する。操作後の変更ゾーンを StateDiff で返す。",
+    "Select a dropdown option by label. Returns StateDiff.",
     {
-      label: z.string().describe("セレクトフィールドのラベルテキスト"),
-      value: z.string().describe("選択するオプションの value 属性または表示テキスト"),
+      label: z.string().describe("Label of the select field"),
+      value: z.string().describe("Option value or text to select"),
     },
     (params) => wrap(() => selectOption(services, params))
   );
 
-  // ── setup_page ──
+  // ── configure_zones ──
   server.tool(
-    "setup_page",
-    "現在のページのゾーンを自動検出し、ZoneDefinition[] を返す。初回訪問時や save_profile の前に実行する。検出結果を確認・修正してから define_zones で確定するか、そのまま save_profile で保存する。",
-    {},
-    (_params) => wrap(() => setupPage(services, _params as Record<string, never>))
-  );
-
-  // ── define_zones ──
-  server.tool(
-    "define_zones",
-    "ゾーン定義を手動で指定して現在のセッションに適用する。setup_page の結果を修正したい場合や、サイト固有のゾーンを明示的に設定したい場合に使用する。",
+    "configure_zones",
+    "Auto-detect or manually set page zones for token reduction. Returns ZoneDefinition[]. Use save_profile() to persist.",
     {
       zones: z.array(
         z.object({
-          name: z.string().describe("ゾーン名（例: header, main, sidebar, footer）"),
-          selector: z.string().describe("CSSセレクタ（例: #main, .content, main）"),
-          description: z.string().optional().describe("ゾーンの説明（任意）"),
+          name: z.string(),
+          selector: z.string(),
+          description: z.string().optional(),
         })
-      ).describe("ゾーン定義の配列"),
+      ).optional().describe("Zone definitions to set. Omit to auto-detect."),
     },
-    (params) => wrap(() => defineZones(services, params))
+    (params) => wrap(() => configureZones(services, params))
   );
 
   // ── save_profile ──
   server.tool(
     "save_profile",
-    "現在のゾーン定義をドメインにひもづけてファイルに保存する。setup_page / define_zones でゾーンを確定した後に実行する。次回 navigate 時に自動ロードされる。",
+    "Persist current zone definitions for the domain. Auto-loaded on next navigate.",
     {
-      domain: z.string().optional().describe("保存先ドメイン（例: example.com）。省略時は現在のページのhostnameを使用する"),
+      domain: z.string().optional().describe("Domain (defaults to current page hostname)"),
     },
     (params) => wrap(() => saveProfile(services, params))
-  );
-
-  // ── list_profiles ──
-  server.tool(
-    "list_profiles",
-    "保存済みのサイトプロファイル一覧を返す。",
-    {},
-    (_params) => wrap(() => listProfiles(services, _params as Record<string, never>))
   );
 
   // ── delete_profile ──
   server.tool(
     "delete_profile",
-    "指定ドメインのサイトプロファイルを削除する。",
+    "Delete the site profile for the specified domain.",
     {
-      domain: z.string().describe("削除対象のドメイン（例: example.com）"),
+      domain: z.string().describe("Domain of the profile to delete (e.g. example.com)"),
     },
     (params) => wrap(() => deleteProfile(services, params))
   );
@@ -223,33 +190,33 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── run_batch ──
   server.tool(
     "run_batch",
-    "複数の操作ステップを一括実行し、最終状態のStateDiffを返す。MCPのラウンドトリップを削減するために使用する。エラー発生時はそのステップのインデックスと状態を返す。曖昧マッチが発生した場合もエラーとして停止する。",
+    "Execute multiple action steps in a single call and return the final StateDiff. Reduces MCP round-trips. On error, returns the step index and state at the point of failure. Ambiguous matches also cause the batch to stop.",
     {
       steps: z.array(
         z.object({
           action: z
-            .enum(["click", "fill", "fill_form", "select", "navigate", "wait"])
-            .describe("実行するアクションの種類"),
-          text: z.string().optional().describe("click: クリックする要素のテキスト"),
+            .enum(["click", "hover", "fill_form", "select", "navigate", "wait"])
+            .describe("Type of action to perform"),
+          text: z.string().optional().describe("click: text of the element to click"),
           label: z
             .string()
             .optional()
-            .describe("fill / select: フィールドのラベルテキスト"),
+            .describe("fill / select: label text of the field"),
           value: z
             .string()
             .optional()
-            .describe("fill / select: 入力する値またはオプション"),
+            .describe("fill / select: value to enter or option to select"),
           fields: z
             .record(z.string(), z.string())
             .optional()
-            .describe("fill_form: ラベル→値のマップ"),
-          url: z.string().optional().describe("navigate: 遷移先URL"),
+            .describe("fill_form: map of label to value"),
+          url: z.string().optional().describe("navigate: URL to navigate to"),
           ms: z
             .number()
             .optional()
-            .describe("wait: 待機ミリ秒（省略時1000ms）"),
+            .describe("wait: milliseconds to wait (default 1000)"),
         })
-      ).describe("実行するステップの配列"),
+      ).describe("Array of steps to execute"),
     },
     (params) => wrap(() => runBatch(services, params))
   );
@@ -257,16 +224,16 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── read_table ──
   server.tool(
     "read_table",
-    "ページ内のテーブルをJSON配列で返す。zone または selector でテーブルを絞り込める。どちらも省略するとページ内の最初のテーブルを対象とする。",
+    "Return a table on the page as a JSON array. Narrow the target with zone or selector. If neither is specified, the first table on the page is used.",
     {
       zone: z
         .string()
         .optional()
-        .describe("テーブルを含むゾーン名。ゾーン内の最初のテーブルを対象とする"),
+        .describe("Zone name containing the table. Targets the first table within the zone."),
       selector: z
         .string()
         .optional()
-        .describe("テーブルを直接指定するCSSセレクタ（例: #data-table, .results table）"),
+        .describe("CSS selector to directly target the table (e.g. #data-table, .results table)"),
     },
     (params) => wrap(() => readTable(services, params))
   );
@@ -274,32 +241,101 @@ run_batch(steps) で複数操作を1回で実行可能。`,
   // ── screenshot ──
   server.tool(
     "screenshot",
-    "現在のページまたは指定ゾーンのスクリーンショットを取得する。Base64エンコードされた画像をJSONで返す。",
+    "Capture a screenshot of the current page or a specified zone. Returns a Base64-encoded image as JSON.",
     {
       zone: z
         .string()
         .optional()
-        .describe("キャプチャ対象のゾーン名。省略時はページ全体を対象とする"),
+        .describe("Zone name to capture. Omit for a full-page screenshot."),
       full_page: z
         .boolean()
         .optional()
-        .describe("true にするとスクロール全体をキャプチャする（zone未指定時のみ有効）"),
+        .describe("Set to true to capture the full scrollable page (only applies when zone is omitted)."),
+      format: z
+        .enum(["png", "jpeg"])
+        .optional()
+        .describe("Image format. Default: png. Use jpeg with quality to reduce token consumption."),
+      quality: z
+        .number()
+        .optional()
+        .describe("JPEG quality (1-100). Default: 50. Only effective when format is jpeg."),
     },
     (params) => wrap(() => takeScreenshot(services, params))
+  );
+
+  // ── upload_file ──
+  server.tool(
+    "upload_file",
+    "Upload files to a file input element identified by label or selector.",
+    {
+      paths: z.array(z.string()).min(1).describe("Absolute file paths to upload"),
+      label: z.string().optional().describe("Label text of the file input"),
+      selector: z.string().optional().describe("CSS selector of the file input"),
+    },
+    (params) => wrap(() => uploadFile(services, params))
+  );
+
+  // ── download_file ──
+  server.tool(
+    "download_file",
+    "Click an element to trigger a file download. Returns filename, size, and a text preview for supported formats.",
+    {
+      text: z.string().describe("Text of the element that triggers the download."),
+      role: z.string().optional().describe("Element role for better matching."),
+      index: z.number().optional().describe("Disambiguation index for AmbiguousMatch."),
+      timeout: z.number().optional().describe("Max wait time for download in ms (default: 30000)."),
+      save_path: z.string().optional().describe("Save the file to this path. If omitted, the temp file is deleted after inspection."),
+    },
+    (params) => wrap(() => downloadFile(services, params))
   );
 
   // ── evaluate ──
   server.tool(
     "evaluate",
-    "ブラウザ上でカスタムJavaScriptを実行し、その戻り値をJSONで返す。フォールバック用の低レベルツール。通常は他のツールを使うこと。",
+    "Execute custom JavaScript in the browser and return the result as JSON. Low-level fallback tool — prefer other tools when possible.",
     {
       script: z
         .string()
         .describe(
-          "実行するJavaScript（関数本体。例: \"return document.title\" ）"
+          "JavaScript to execute (function body, e.g. \"return document.title\")"
         ),
     },
     (params) => wrap(() => evaluate(services, params))
+  );
+
+  // ── set_viewport ──
+  server.tool(
+    "set_viewport",
+    "Change the browser viewport size using a preset or explicit dimensions. Returns ActionModeState after resize.",
+    {
+      width:  z.number().optional().describe("Viewport width in pixels"),
+      height: z.number().optional().describe("Viewport height in pixels"),
+      preset: z.enum(["mobile", "tablet", "desktop"]).optional()
+        .describe("Preset: mobile(375x812), tablet(768x1024), desktop(1280x720)"),
+    },
+    (params) => wrap(() => setViewport(services, params))
+  );
+
+  // ── press_key ──
+  server.tool(
+    "press_key",
+    "Send a keyboard key press to the current page. Returns a StateDiff of changed zones after the action.",
+    {
+      key: z.string().describe("Key to press (e.g. Tab, Enter, Escape, ArrowDown)"),
+    },
+    (params) => wrap(() => pressKey(services, params))
+  );
+
+  // ── wait_for ──
+  server.tool(
+    "wait_for",
+    "Wait until the specified text or CSS selector becomes visible on the page. Returns ActionModeState after the element appears.",
+    {
+      text:     z.string().optional().describe("Text to wait for (visible on page)"),
+      selector: z.string().optional().describe("CSS selector to wait for"),
+      timeout:  z.number().optional().describe("Max wait time in ms (default: 10000)"),
+    },
+    (params) => wrap(() => waitFor(services, params))
   );
 
   return { server, services };

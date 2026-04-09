@@ -13,9 +13,9 @@ export async function saveProfile(
 
   const zones = s.zones.getZones();
   if (zones.length === 0) {
-    throw new Error('保存するゾーン定義がありません。先にゾーンを定義してください。');
+    throw new Error('No zone definitions to save. Please define zones first.');
   }
   await s.profiles.save(domain, zones);
 
-  return `プロファイルを保存しました: ${domain}（ゾーン数: ${zones.length}）`;
+  return `Profile saved for: ${domain} (${zones.length} zone(s))`;
 }

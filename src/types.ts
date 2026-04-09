@@ -1,49 +1,51 @@
-// ゾーン
+// Zone
 export interface ZoneDefinition {
-  name: string;           // "header", "main", "sidebar" 等
-  selector: string;       // CSSセレクタ（内部用、AIには見せない）
+  name: string;           // "header", "main", "sidebar", etc.
+  selector: string;       // CSS selector (internal use only, not exposed to AI)
   description?: string;
 }
 
 export interface ZoneSnapshot {
   name: string;
   textContent: string;
-  contentHash: string;    // 差分検出用
+  contentHash: string;    // used for change detection
   interactiveElements: InteractiveElement[];
 }
 
-// 要素（ref IDは内部用。AIへのレスポンスには PublicElement を使う）
+// Element (ref ID is internal. Use PublicElement in AI responses)
 export interface InteractiveElement {
-  ref: string;            // 内部用（AIには非公開）
-  tag: string;            // "button", "a", "input" 等
+  ref: string;            // internal use only (not exposed to AI)
+  tag: string;            // "button", "a", "input", etc.
   type?: string;          // input type
-  role?: string;          // role属性
-  text: string;           // 表示テキスト or aria-label
-  label?: string;         // 関連するlabelのテキスト（input用）
+  role?: string;          // role attribute
+  text: string;           // display text or aria-label
+  label?: string;         // associated label text (for inputs)
   placeholder?: string;
-  name?: string;          // name属性
-  value?: string;         // 現在値（input用）
+  name?: string;          // name attribute
+  value?: string;         // current value (for inputs)
   disabled: boolean;
   zone?: string;
-  selector?: string;      // 要素を一意に特定するCSSセレクタ（内部用）
+  selector?: string;      // CSS selector that uniquely identifies this element (internal use only)
+  scanIndex?: number;     // index in scan result array (internal use only, nth-based fallback)
+  context?: string;       // Nearby heading or landmark label for disambiguation
 }
 
-export type PublicElement = Omit<InteractiveElement, "ref">;
+export type PublicElement = Omit<InteractiveElement, "ref" | "selector" | "scanIndex" | "context">;
 
-// ページ状態
+// Page state
 export interface ActionModeState {
   url: string;
   title: string;
   zones: Array<{ name: string; summary: string }>;
-  actions: PublicElement[];      // ボタン・リンク
-  formFields: PublicElement[];   // input・select・textarea
+  actions: PublicElement[];      // buttons and links
+  formFields: PublicElement[];   // input, select, textarea
 }
 
 export interface VisualModeState {
   url: string;
   title: string;
-  dom: string;          // フルariaSnapshot
-  screenshot?: string;  // Base64画像（オプション）
+  dom: string;          // full aria snapshot
+  screenshot?: string;  // Base64 image (optional)
 }
 
 export interface StateDiff {
@@ -52,7 +54,7 @@ export interface StateDiff {
   unchangedZones: string[];
 }
 
-// プロファイル（~/.config/smallright/profiles/{domain}.json）
+// Profile (~/.config/smallright/profiles/{domain}.json)
 export interface SiteProfile {
   domain: string;
   zones: ZoneDefinition[];
@@ -60,9 +62,9 @@ export interface SiteProfile {
   updatedAt: string;
 }
 
-// バッチ（AIはテキスト/ラベルで要素を指定）
+// Batch (AI specifies elements by text/label, not by ref or selector)
 export interface BatchStep {
-  action: "click" | "fill" | "fill_form" | "select" | "navigate" | "wait";
+  action: "click" | "hover" | "fill_form" | "select" | "navigate" | "wait";
   text?: string;
   label?: string;
   value?: string;
@@ -75,28 +77,30 @@ export interface BatchResult {
   success: boolean;
   stepsCompleted: number;
   totalSteps: number;
-  finalState: ActionModeState;
+  finalState?: ActionModeState;
   diff: StateDiff;
   error?: { stepIndex: number; message: string; stateAtError: ActionModeState };
 }
 
-// 曖昧マッチ時の候補返却
+// Returned when a query matches multiple elements
 export interface AmbiguousMatch {
   query: string;
-  candidates: Array<{ text: string; tag: string; zone?: string; index: number }>;
+  candidates: Array<{ text: string; tag: string; zone?: string; context?: string; index: number }>;
   message: string;
 }
 
-// コア層のインターフェース（実装は各Phaseで追加）
+// Core layer interfaces
 export interface BrowserManager {
   getPage(): Promise<import('playwright').Page>;
   navigateTo(url: string): Promise<void>;
+  waitForSpaReady(page: import('playwright').Page): Promise<void>;
+  consumeDialogMessages(): Array<{ type: string; message: string }>;
   close(): Promise<void>;
 }
 
 export interface ElementRegistry {
   scan(page: import('playwright').Page): Promise<InteractiveElement[]>;
-  resolveByText(query: string, elements: InteractiveElement[], zone?: string, index?: number): InteractiveElement | AmbiguousMatch | null;
+  resolveByText(query: string, elements: InteractiveElement[], zone?: string, index?: number, role?: string): InteractiveElement | AmbiguousMatch | null;
   resolveByLabel(label: string, elements: InteractiveElement[], index?: number): InteractiveElement | AmbiguousMatch | null;
 }
 
@@ -105,7 +109,6 @@ export interface StateBuilder {
   buildVisualModeState(page: import('playwright').Page): Promise<VisualModeState>;
 }
 
-// 以下はPhase 2以降で実装するため、最小限のインターフェースのみ
 export interface ZoneManager {
   autoDetect(page: import('playwright').Page): Promise<ZoneDefinition[]>;
   setZones(zones: ZoneDefinition[]): void;
@@ -129,15 +132,13 @@ export interface BatchExecutor {
   execute(s: Services, steps: BatchStep[]): Promise<BatchResult>;
 }
 
-// サービス集約（server.tsで生成し、各ツールに渡す）
-// freee-mcp-soloでは依存が2つ(client, cache)なので個別引数で済むが、
-// smallrightは依存が多いためサービスバッグパターンを採用する
+// Services bag pattern: aggregates all core service instances
 export interface Services {
   browser: BrowserManager;
   elements: ElementRegistry;
   state: StateBuilder;
-  zones: ZoneManager;        // Phase 3で本実装、それ以前はスタブ
-  differ: StateDiffer;       // Phase 2で本実装、それ以前はスタブ
-  profiles: ProfileManager;  // Phase 4で本実装、それ以前はスタブ
-  batch: BatchExecutor;      // Phase 5で本実装、それ以前はスタブ
+  zones: ZoneManager;
+  differ: StateDiffer;
+  profiles: ProfileManager;
+  batch: BatchExecutor;
 }

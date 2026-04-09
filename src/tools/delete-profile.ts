@@ -6,8 +6,8 @@ export async function deleteProfile(
 ): Promise<string> {
   const deleted = await s.profiles.delete(params.domain);
   if (deleted) {
-    return `プロファイルを削除しました: ${params.domain}`;
+    return `Profile deleted: ${params.domain}`;
   } else {
-    return `プロファイルが見つかりませんでした: ${params.domain}`;
+    return `Profile not found: ${params.domain}`;
   }
 }
