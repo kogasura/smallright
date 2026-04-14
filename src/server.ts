@@ -30,7 +30,7 @@ export function createMcpServer(): { server: McpServer; services: Services } {
   const server = new McpServer(
     {
       name: "smallright",
-      version: "0.3.0",
+      version: "0.4.0",
     },
     {
       instructions: `smallright — AI-Friendly Browser Automation
@@ -54,6 +54,7 @@ If multiple elements match, a candidate list is returned. Re-call with the index
 - configure_zones() auto-detects zones. Pass zones parameter to set manually.
 - read_page(zone: "main") fetches only the specified zone
 - save_profile() persists zone definitions for auto-loading on next visit
+- save_profile(save_session: true) also saves browser cookies for session persistence (login state survives restarts)
 
 ## Waiting
 - wait_for(text) or wait_for(selector) — wait for an element to appear
@@ -170,9 +171,12 @@ run_batch(steps) executes multiple actions in a single call.`,
   // ── save_profile ──
   server.tool(
     "save_profile",
-    "Persist current zone definitions for the domain. Auto-loaded on next navigate.",
+    "Persist current zone definitions (and optionally session cookies) for the domain. Auto-loaded on next navigate. Use save_session: true to preserve login state across restarts.",
     {
       domain: z.string().optional().describe("Domain (defaults to current page hostname)"),
+      save_session: z.boolean().optional().describe(
+        "Set to true to save current browser cookies alongside zone definitions for session persistence. Default: false."
+      ),
     },
     (params) => wrap(() => saveProfile(services, params))
   );

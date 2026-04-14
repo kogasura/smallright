@@ -58,6 +58,7 @@ export interface StateDiff {
 export interface SiteProfile {
   domain: string;
   zones: ZoneDefinition[];
+  cookies?: import('playwright').Cookie[];
   createdAt: string;
   updatedAt: string;
 }
@@ -123,7 +124,7 @@ export interface StateDiffer {
 
 export interface ProfileManager {
   load(domain: string): Promise<SiteProfile | null>;
-  save(domain: string, zones: ZoneDefinition[]): Promise<void>;
+  save(domain: string, data: { zones?: ZoneDefinition[]; cookies?: import('playwright').Cookie[] }): Promise<void>;
   list(): Promise<SiteProfile[]>;
   delete(domain: string): Promise<boolean>;
 }
