@@ -1,6 +1,6 @@
 {
   "name": "smallright",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "AI-friendly browser automation MCP server that reduces token consumption by zone-based partial DOM retrieval",
   "author": "kogasura",
   "license": "MIT",

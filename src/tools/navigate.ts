@@ -51,10 +51,20 @@ export async function navigate(
     return responseJson;
   }
 
-  await s.browser.navigateTo(params.url!);
-
   const domain = new URL(params.url!).hostname;
   const profile = await s.profiles.load(domain);
+
+  if (profile?.cookies && profile.cookies.length > 0) {
+    const relevantCookies = profile.cookies.filter(c =>
+      domain.endsWith(c.domain.replace(/^\./, ''))
+    );
+    if (relevantCookies.length > 0) {
+      await page.context().addCookies(relevantCookies);
+    }
+  }
+
+  await s.browser.navigateTo(params.url!);
+
   if (profile) {
     s.zones.setZones(profile.zones);
   }

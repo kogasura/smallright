@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import type { ProfileManager, SiteProfile, ZoneDefinition } from "../types.js";
+import type { Cookie } from "playwright";
 
 function getProfilesDir(): string {
   return path.join(os.homedir(), ".config", "smallright", "profiles");
@@ -34,30 +35,40 @@ export function createProfileManager(): ProfileManager {
       }
     },
 
-    async save(domain: string, zones: ZoneDefinition[]): Promise<void> {
+    async save(domain: string, data: { zones?: ZoneDefinition[]; cookies?: Cookie[] }): Promise<void> {
       const dir = getProfilesDir();
-      await fs.mkdir(dir, { recursive: true });
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
       const filePath = getProfilePath(domain);
       const now = new Date().toISOString();
 
       let createdAt = now;
+      let existing: SiteProfile | undefined;
       try {
-        const existing = await fs.readFile(filePath, "utf-8");
-        const parsed = JSON.parse(existing) as SiteProfile;
-        createdAt = parsed.createdAt;
+        const content = await fs.readFile(filePath, "utf-8");
+        existing = JSON.parse(content) as SiteProfile;
+        createdAt = existing.createdAt;
       } catch {
         // File does not exist yet; use current time as createdAt
       }
 
+      const cookiesField: Pick<SiteProfile, 'cookies'> = {};
+      if (data.cookies !== undefined) {
+        if (data.cookies.length > 0) cookiesField.cookies = data.cookies;
+      } else if (existing?.cookies && existing.cookies.length > 0) {
+        cookiesField.cookies = existing.cookies;
+      }
+
       const profile: SiteProfile = {
         domain,
-        zones,
+        zones: data.zones ?? existing?.zones ?? [],
+        ...cookiesField,
         createdAt,
         updatedAt: now,
       };
 
       await fs.writeFile(filePath, JSON.stringify(profile, null, 2), "utf-8");
+      await fs.chmod(filePath, 0o600);
     },
 
     async list(): Promise<SiteProfile[]> {

@@ -8,6 +8,10 @@ class BrowserManagerImpl implements BrowserManager {
   private lastDialogMessages: Array<{ type: string; message: string }> = [];
 
   private isHeadless(): boolean {
+    // CLI: --no-headless or --headless=false
+    if (process.argv.includes('--no-headless')) return false;
+    if (process.argv.includes('--headless=false')) return false;
+    // Env: SMALLRIGHT_HEADLESS=false
     const envVal = process.env['SMALLRIGHT_HEADLESS'];
     if (envVal === undefined || envVal === '') return true;
     return envVal !== 'false';

@@ -252,6 +252,17 @@ class BatchExecutorImpl implements BatchExecutor {
           await locator.selectOption(step.value ?? '');
 
         } else if (step.action === 'navigate') {
+          const targetDomain = new URL(step.url!).hostname;
+          const navProfile = await s.profiles.load(targetDomain);
+          if (navProfile?.cookies && navProfile.cookies.length > 0) {
+            const batchPage = await s.browser.getPage();
+            const relevantCookies = navProfile.cookies.filter(c =>
+              targetDomain.endsWith(c.domain.replace(/^\./, ''))
+            );
+            if (relevantCookies.length > 0) {
+              await batchPage.context().addCookies(relevantCookies);
+            }
+          }
           await s.browser.navigateTo(step.url ?? '');
           await s.browser.waitForSpaReady(page);
           // Auto-load profile for the navigated domain
