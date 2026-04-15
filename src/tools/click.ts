@@ -1,5 +1,5 @@
 import type { Services, AmbiguousMatch } from '../types.js';
-import { resolveLocator } from '../core/locator-helper.js';
+import { resolveLocator, tryFallbackClick } from '../core/locator-helper.js';
 
 export async function clickElement(
   s: Services,
@@ -45,6 +45,27 @@ export async function clickElement(
   const resolved = s.elements.resolveByText(params.text, elements, params.zone, params.index, params.role);
 
   if (resolved === null) {
+    if (params.action !== 'hover') {
+      // Fallback: dispatch synthetic click events to non-interactive elements
+      // (e.g. MUI Typography <span> with React onClick handlers)
+      const clicked = await tryFallbackClick(page, params.text);
+      if (clicked) {
+        // Wait for potential SPA navigation triggered by the synthetic click
+        try {
+          await page.waitForURL((url) => url.toString() !== urlBefore, { timeout: 2000 });
+        } catch {
+          // No navigation occurred — e.g. drawer open, state update. Continue.
+        }
+        await page.waitForTimeout(300);
+        await s.elements.scan(page);
+        const urlAfter = page.url();
+        const snapshotAfter = await s.differ.takeSnapshot(page, zones);
+        const diff = s.differ.computeDiff(snapshotBefore, snapshotAfter, urlBefore, urlAfter);
+        const dialogs = s.browser.consumeDialogMessages();
+        const result = dialogs.length > 0 ? { ...diff, dialogs } : diff;
+        return JSON.stringify(result, null, 2);
+      }
+    }
     const allTexts = elements.map((e) => `- ${e.text} (${e.tag})`).join('\n');
     throw new Error(
       `No element matching "${params.text}" was found.\n\nInteractive elements on the page:\n${allTexts}`,

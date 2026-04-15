@@ -1,6 +1,73 @@
 import { type Page, type Locator } from 'playwright';
 import type { InteractiveElement } from '../types.js';
 
+/**
+ * Fallback click for non-interactive elements (e.g. MUI Typography / React-rendered spans).
+ * When the standard interactive-element scan cannot find the target, this function searches
+ * ALL visible DOM elements by exact text match, picks the most leaf-like one, and dispatches
+ * synthetic mouse events that bubble up to React's root-level event delegation.
+ *
+ * Limitations: Shadow DOM internals and cross-origin iframes are not reachable via
+ * document.querySelectorAll and are therefore not covered by this fallback.
+ *
+ * Returns true if a matching element was found and events were dispatched; false otherwise.
+ */
+export async function tryFallbackClick(page: Page, text: string): Promise<boolean> {
+  // Reject empty search text early — avoids matching elements with empty innerText
+  if (!text.trim()) return false;
+
+  return page.evaluate((searchText: string) => {
+    function normalize(s: string): string {
+      return s.replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+    const normalized = normalize(searchText);
+    if (!normalized) return false;
+
+    const matches = Array.from(document.querySelectorAll('*')).filter(el => {
+      const htmlEl = el as HTMLElement;
+      // 1. Text match first — filters out the vast majority without touching layout APIs
+      const innerText = normalize(htmlEl.innerText ?? '');
+      const ariaLabel = normalize(htmlEl.getAttribute('aria-label') ?? '');
+      if (innerText !== normalized && ariaLabel !== normalized) return false;
+      // 2. Visibility check (only for text-matching elements)
+      const style = window.getComputedStyle(htmlEl);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      if (
+        htmlEl.offsetParent === null &&
+        style.position !== 'fixed' &&
+        style.position !== 'absolute' &&
+        style.position !== 'sticky'
+      ) return false;
+      // 3. Must have non-zero dimensions and be inside the viewport
+      const rect = htmlEl.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return false;
+      if (rect.right < 0 || rect.bottom < 0 || rect.left > window.innerWidth || rect.top > window.innerHeight) return false;
+      return true;
+    });
+
+    if (matches.length === 0) return false;
+
+    // Pick the most leaf-like element: prefer true leaf nodes (no child elements),
+    // otherwise fall back to the one with fewest direct children.
+    const leaf = matches.find(el => el.childElementCount === 0);
+    const target = leaf ?? matches.reduce((best, current) =>
+      current.childElementCount < best.childElementCount ? current : best
+    );
+
+    // Dispatch events with element center coordinates so position-aware React components
+    // (tooltips, dropdowns, etc.) receive realistic mouse coordinates.
+    const rect = (target as HTMLElement).getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const eventInit: MouseEventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+
+    for (const type of ['mouseenter', 'mouseover', 'mousedown', 'mouseup', 'click']) {
+      target.dispatchEvent(new MouseEvent(type, eventInit));
+    }
+    return true;
+  }, text);
+}
+
 export function escapeAttrValue(s: string): string {
   return s.replace(/["\\]/g, '\\$&');
 }
