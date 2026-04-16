@@ -5,7 +5,7 @@ import type {
   Services,
   AmbiguousMatch,
 } from '../types.js';
-import { resolveLocator } from './locator-helper.js';
+import { resolveLocator, tryFallbackClick } from './locator-helper.js';
 
 class BatchExecutorImpl implements BatchExecutor {
   async execute(s: Services, steps: BatchStep[]): Promise<BatchResult> {
@@ -33,27 +33,31 @@ class BatchExecutorImpl implements BatchExecutor {
           );
 
           if (resolved === null) {
-            const allTexts = elements.map((e) => `- ${e.text} (${e.tag})`).join('\n');
-            const stateAtError = await s.state.buildActionModeState(page, elements);
-            const dialogs = s.browser.consumeDialogMessages();
-            const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
-              success: false,
-              stepsCompleted,
-              totalSteps: steps.length,
-              finalState: stateAtError,
-              diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
-              error: {
-                stepIndex: i,
-                message: `No element matching "${step.text}" was found.\n\nInteractive elements on the page:\n${allTexts}`,
-                stateAtError,
-              },
-            };
-            if (dialogs.length > 0) earlyResult.dialogs = dialogs;
-            return earlyResult;
-          }
-
-          // Ambiguous match is treated as an error
-          if ('candidates' in resolved) {
+            // Fallback: dispatch synthetic click events to non-interactive elements
+            // (e.g. MUI Typography <span> with React onClick handlers)
+            const clicked = await tryFallbackClick(page, step.text ?? '');
+            if (!clicked) {
+              const allTexts = elements.map((e) => `- ${e.text} (${e.tag})`).join('\n');
+              const stateAtError = await s.state.buildActionModeState(page, elements);
+              const dialogs = s.browser.consumeDialogMessages();
+              const earlyResult: BatchResult & { dialogs?: Array<{ type: string; message: string }> } = {
+                success: false,
+                stepsCompleted,
+                totalSteps: steps.length,
+                finalState: stateAtError,
+                diff: s.differ.computeDiff(snapshotBefore, snapshotBefore, urlBefore, urlBefore),
+                error: {
+                  stepIndex: i,
+                  message: `No element matching "${step.text}" was found.\n\nInteractive elements on the page:\n${allTexts}`,
+                  stateAtError,
+                },
+              };
+              if (dialogs.length > 0) earlyResult.dialogs = dialogs;
+              return earlyResult;
+            }
+            // Fallback succeeded: fall through to post-step wait/scan below
+          } else if ('candidates' in resolved) {
+            // Ambiguous match is treated as an error
             const ambiguous = resolved as AmbiguousMatch;
             const stateAtError = await s.state.buildActionModeState(page, elements);
             const dialogs = s.browser.consumeDialogMessages();
@@ -71,10 +75,10 @@ class BatchExecutorImpl implements BatchExecutor {
             };
             if (dialogs.length > 0) earlyResult.dialogs = dialogs;
             return earlyResult;
+          } else {
+            const locator = resolveLocator(page, resolved);
+            await locator.click({ timeout: 10000 });
           }
-
-          const locator = resolveLocator(page, resolved);
-          await locator.click({ timeout: 10000 });
 
         } else if (step.action === 'hover') {
           // Resolve element by text and hover
@@ -260,7 +264,12 @@ class BatchExecutorImpl implements BatchExecutor {
               targetDomain.endsWith(c.domain.replace(/^\./, ''))
             );
             if (relevantCookies.length > 0) {
-              await batchPage.context().addCookies(relevantCookies);
+              const existingCookies = await batchPage.context().cookies(step.url!);
+              const existingNames = new Set(existingCookies.map(c => c.name));
+              const missingCookies = relevantCookies.filter(c => !existingNames.has(c.name));
+              if (missingCookies.length > 0) {
+                await batchPage.context().addCookies(missingCookies);
+              }
             }
           }
           await s.browser.navigateTo(step.url ?? '');
