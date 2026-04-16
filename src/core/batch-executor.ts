@@ -264,7 +264,12 @@ class BatchExecutorImpl implements BatchExecutor {
               targetDomain.endsWith(c.domain.replace(/^\./, ''))
             );
             if (relevantCookies.length > 0) {
-              await batchPage.context().addCookies(relevantCookies);
+              const existingCookies = await batchPage.context().cookies(step.url!);
+              const existingNames = new Set(existingCookies.map(c => c.name));
+              const missingCookies = relevantCookies.filter(c => !existingNames.has(c.name));
+              if (missingCookies.length > 0) {
+                await batchPage.context().addCookies(missingCookies);
+              }
             }
           }
           await s.browser.navigateTo(step.url ?? '');
