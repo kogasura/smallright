@@ -59,7 +59,12 @@ export async function navigate(
       domain.endsWith(c.domain.replace(/^\./, ''))
     );
     if (relevantCookies.length > 0) {
-      await page.context().addCookies(relevantCookies);
+      const existingCookies = await page.context().cookies(params.url!);
+      const existingNames = new Set(existingCookies.map(c => c.name));
+      const missingCookies = relevantCookies.filter(c => !existingNames.has(c.name));
+      if (missingCookies.length > 0) {
+        await page.context().addCookies(missingCookies);
+      }
     }
   }
 
