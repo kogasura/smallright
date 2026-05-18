@@ -17,6 +17,8 @@ import { saveProfile } from "./tools/save-profile.js";
 import { deleteProfile } from "./tools/delete-profile.js";
 import { runBatch } from "./tools/run-batch.js";
 import { readTable } from "./tools/read-table.js";
+import { readConsoleMessages } from "./tools/read-console-messages.js";
+import { readNetworkRequests } from "./tools/read-network-requests.js";
 import { takeScreenshot } from "./tools/screenshot.js";
 import { evaluate } from "./tools/evaluate.js";
 import { uploadFile } from "./tools/upload-file.js";
@@ -25,12 +27,13 @@ import { setViewport } from "./tools/set-viewport.js";
 import { pressKey } from "./tools/press-key.js";
 import { waitFor } from "./tools/wait-for.js";
 import type { Services } from "./types.js";
+import { BUFFER_LIMITS } from "./types.js";
 
 export function createMcpServer(): { server: McpServer; services: Services } {
   const server = new McpServer(
     {
       name: "smallright",
-      version: "0.4.0",
+      version: "0.5.0",
     },
     {
       instructions: `smallright — AI-Friendly Browser Automation
@@ -64,7 +67,12 @@ If multiple elements match, a candidate list is returned. Re-call with the index
 - download_file(text) — click to download, returns filename/size/preview
 
 ## Batch Execution
-run_batch(steps) executes multiple actions in a single call.`,
+run_batch(steps) executes multiple actions in a single call.
+
+## Debugging
+- read_console_messages(level?, pattern?) — fetch browser console output
+- read_network_requests(url_pattern?, status?) — fetch HTTP requests (status: 200 or "4xx" etc.)
+- Buffers are per-page, capped at 500 console / 200 network entries (oldest dropped).`,
     }
   );
 
@@ -240,6 +248,82 @@ run_batch(steps) executes multiple actions in a single call.`,
         .describe("CSS selector to directly target the table (e.g. #data-table, .results table)"),
     },
     (params) => wrap(() => readTable(services, params))
+  );
+
+  // ── read_console_messages ──
+  server.tool(
+    "read_console_messages",
+    "Retrieve console messages (log/warn/error etc.) captured during the page session. Useful for debugging JS errors and side effects. Filters by regex pattern, level, and timestamp. Buffer holds up to 500 messages (FIFO). When clear=true, the entire buffer is cleared regardless of filters.",
+    {
+      pattern: z
+        .string()
+        .optional()
+        .describe("Regular expression to match against message text"),
+      level: z
+        .enum(["log", "info", "warn", "error", "debug"])
+        .optional()
+        .describe("Filter by console level. One of: log, info, warn, error, debug"),
+      since: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe("Return only messages with timestamp >= this value (epoch ms, non-negative integer)"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(BUFFER_LIMITS.console)
+        .optional()
+        .describe(`Max number of messages to return, newest first (default: 100, max: ${BUFFER_LIMITS.console})`),
+      clear: z
+        .boolean()
+        .optional()
+        .describe("If true, clear the buffer after reading"),
+    },
+    (params) => wrap(() => readConsoleMessages(services, params))
+  );
+
+  // ── read_network_requests ──
+  server.tool(
+    "read_network_requests",
+    "Retrieve HTTP requests issued by the page. Filters by URL regex, status code (or range like '4xx'), method, and resource type. Response bodies are not captured. Buffer holds up to 200 requests (FIFO). When clear=true, the entire buffer is cleared regardless of filters. Failed requests (without HTTP status) are returned only when 'status' filter is omitted.",
+    {
+      url_pattern: z
+        .string()
+        .optional()
+        .describe("Regular expression to match against request URL"),
+      status: z
+        .union([z.number().int().min(100).max(599), z.enum(["2xx", "3xx", "4xx", "5xx"])])
+        .optional()
+        .describe("Filter by HTTP status code (exact integer 100-599) or range string (e.g. '4xx')"),
+      method: z
+        .string()
+        .optional()
+        .describe("Filter by HTTP method (e.g. GET, POST); case-insensitive"),
+      resource_type: z
+        .string()
+        .optional()
+        .describe("Filter by resource type (e.g. xhr, fetch, document, script); case-insensitive"),
+      since: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe("Return only requests with requestedAt >= this value (epoch ms, non-negative integer)"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(BUFFER_LIMITS.network)
+        .optional()
+        .describe(`Max number of requests to return, newest first (default: 50, max: ${BUFFER_LIMITS.network})`),
+      clear: z
+        .boolean()
+        .optional()
+        .describe("If true, clear the buffer after reading"),
+    },
+    (params) => wrap(() => readNetworkRequests(services, params))
   );
 
   // ── screenshot ──
