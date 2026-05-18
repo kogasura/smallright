@@ -90,12 +90,41 @@ export interface AmbiguousMatch {
   message: string;
 }
 
+// Console / Network capture
+export interface ConsoleMessage {
+  type: string;  // Playwright が返す任意の値（log/info/warn/error/debug 等）を保持
+  text: string;
+  url?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+  timestamp: number;
+}
+
+export interface NetworkRequestRecord {
+  url: string;
+  method: string;
+  resourceType: string;
+  requestedAt: number;
+  status?: number;
+  statusText?: string;
+  contentType?: string;
+  respondedAt?: number;
+  durationMs?: number;
+  errorText?: string;
+}
+
+export const BUFFER_LIMITS = { console: 500, network: 200 } as const;
+
 // Core layer interfaces
 export interface BrowserManager {
   getPage(): Promise<import('playwright').Page>;
   navigateTo(url: string): Promise<void>;
   waitForSpaReady(page: import('playwright').Page): Promise<void>;
   consumeDialogMessages(): Array<{ type: string; message: string }>;
+  getConsoleMessages(): { messages: ConsoleMessage[]; truncated: boolean };
+  getNetworkRequests(): { requests: NetworkRequestRecord[]; truncated: boolean };
+  clearConsoleMessages(): void;
+  clearNetworkRequests(): void;
   close(): Promise<void>;
 }
 

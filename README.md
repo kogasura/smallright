@@ -67,6 +67,13 @@ read_page(zone: "main")
 | `run_batch` | Execute multiple steps in one call and return the final StateDiff |
 | `screenshot` | Capture the current page or a specific zone as a Base64 image |
 
+### Debugging (2 tools)
+
+| Tool | Description |
+|---|---|
+| `read_console_messages` | Retrieve browser console output (log/warn/error etc.); filter by level, regex, or timestamp; buffer holds up to 500 messages (FIFO) |
+| `read_network_requests` | Retrieve HTTP requests issued by the page; filter by URL regex, status code or range (`"4xx"` etc.), method, resource type; buffer holds up to 200 requests (FIFO) |
+
 ### Mid-level (5 tools)
 
 | Tool | Description |
