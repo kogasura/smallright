@@ -1,0 +1,21 @@
+{
+  "name": "smallright-benchmarks",
+  "version": "1.0.0",
+  "description": "Token consumption benchmarks: smallright vs @playwright/mcp",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "bench": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

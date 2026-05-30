@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "smallright": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["{{SMALLRIGHT_DIST}}"],
+      "env": { "SMALLRIGHT_HEADLESS": "true" }
+    }
+  }
+}
