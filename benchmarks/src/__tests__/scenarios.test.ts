@@ -92,12 +92,15 @@ describe("judgeScenario", () => {
 // ---------------------------------------------------------------------------
 
 describe("targetUrls", () => {
-  it("local は同梱フィクスチャの file:// URL を返す", () => {
-    const u = targetUrls("local");
-    expect(u.shop).toMatch(/^file:\/\//);
-    expect(u.shop).toContain("fixtures/shop/index.html");
-    expect(u.tables).toMatch(/^file:\/\//);
-    expect(u.tables).toContain("fixtures/tables.html");
+  it("local は同梱フィクスチャの http URL を返す", () => {
+    const u = targetUrls("local", "http://127.0.0.1:12345");
+    expect(u.shop).toBe("http://127.0.0.1:12345/shop/index.html");
+    expect(u.tables).toBe("http://127.0.0.1:12345/tables.html");
+  });
+
+  it("local の baseUrl 末尾スラッシュは正規化される", () => {
+    const u = targetUrls("local", "http://127.0.0.1:12345/");
+    expect(u.shop).toBe("http://127.0.0.1:12345/shop/index.html");
   });
 
   it("remote は実サイトの URL を返す", () => {

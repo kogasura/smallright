@@ -47,28 +47,42 @@ export function parsePreflight(resultText: string, mcpKey: string): PreflightRes
   return { mcp_key: mcpKey, ok: true, tool_count: unique.size, reason: null };
 }
 
+/** 事前チェックの試行回数。stdio MCP の起動が間に合わない一過性の失敗を吸収する */
+export const PREFLIGHT_ATTEMPTS = 3;
+
 /**
- * 対象 MCP のツールが実際に接続されているかを、実行前に 1 回だけ確認する。
+ * 対象 MCP のツールが実際に接続されているかを実行前に確認する。
+ *
+ * stdio の MCP サーバー（特に npx 経由で起動する playwright）は、初回起動時に
+ * パッケージ解決やライブラリ読み込みで時間がかかり、ツール列挙のプロンプトに
+ * 間に合わずに 0 件と見えることがある。これは一過性なので、繋がるまで数回
+ * リトライしてから失敗と判断する。
  */
 export async function preflightMcp(mcp: McpTarget, model: string): Promise<PreflightResult> {
-  const result = await runClaude({
-    prompt: PREFLIGHT_PROMPT,
-    mcpConfigPath: mcp.configPath,
-    model,
-    allowedTools: mcp.toolGlob,
-    timeoutMs: PREFLIGHT_TIMEOUT_MS,
-  });
+  let last: PreflightResult | null = null;
 
-  if (result.is_error) {
-    return {
-      mcp_key: mcp.key,
-      ok: false,
-      tool_count: 0,
-      reason: `事前チェックの実行に失敗: ${result.raw_error ?? "unknown error"}`,
-    };
+  for (let attempt = 1; attempt <= PREFLIGHT_ATTEMPTS; attempt++) {
+    const result = await runClaude({
+      prompt: PREFLIGHT_PROMPT,
+      mcpConfigPath: mcp.configPath,
+      model,
+      allowedTools: mcp.toolGlob,
+      timeoutMs: PREFLIGHT_TIMEOUT_MS,
+    });
+
+    last = result.is_error
+      ? {
+          mcp_key: mcp.key,
+          ok: false,
+          tool_count: 0,
+          reason: `事前チェックの実行に失敗: ${result.raw_error ?? "unknown error"}`,
+        }
+      : parsePreflight(result.result, mcp.key);
+
+    if (last.ok) return last;
   }
 
-  return parsePreflight(result.result, mcp.key);
+  return last!;
 }
 
 /**
@@ -91,7 +105,7 @@ export function formatPreflightFailure(failures: PreflightResult[]): string {
     "",
     "確認すること:",
     "  - smallright: リポジトリルートで `npm run build` を実行し dist/index.js があるか",
-    "  - playwright: `npx -y @playwright/mcp@0.0.29 --help` が通るか（ネットワーク到達性）",
+    "  - playwright: `cd benchmarks && npm install` で @playwright/mcp が入っているか（node_modules）",
     "  - 実行環境が stdio の MCP サーバー起動を許可しているか",
     "",
     "チェック自体を飛ばす場合は --skip-preflight を付けてください（非推奨）。"

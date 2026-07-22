@@ -1,13 +1,7 @@
-import * as path from "node:path";
-import { pathToFileURL } from "node:url";
-import { dirFromMetaUrl } from "./paths.js";
-
-const FIXTURES_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "fixtures");
-
 /**
  * 計測対象サイトの種別。
  *
- * - local:  リポジトリ同梱の固定 HTML (file://)。再現性がある
+ * - local:  リポジトリ同梱の固定 HTML。再現性がある
  * - remote: 実在の公開サイト。実環境に近いが仕様変更・障害で結果が変わる
  */
 export type TargetKind = "local" | "remote";
@@ -19,15 +13,27 @@ export interface TargetUrls {
   tables: string;
 }
 
-function fileUrl(...segments: string[]): string {
-  return pathToFileURL(path.join(FIXTURES_DIR, ...segments)).href;
-}
+/** local ターゲットのフィクスチャを配信する既定 HTTP ベース URL */
+export const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1";
 
-export function targetUrls(kind: TargetKind): TargetUrls {
+/**
+ * 計測対象の URL を組み立てる。
+ *
+ * local は同梱フィクスチャを `http://` で配信する。かつては file:// を使って
+ * いたが、smallright の navigate は http/https 以外のスキームを受け付けない
+ * （browser-manager が `Unsupported protocol` で弾く）ため、両 MCP が同じ条件で
+ * 開けるよう HTTP サーバー経由に統一した。実際の配信ポートは実行時に
+ * fixtureServer が採番するため、その baseUrl を localBaseUrl で受け取る。
+ */
+export function targetUrls(
+  kind: TargetKind,
+  localBaseUrl: string = DEFAULT_LOCAL_BASE_URL
+): TargetUrls {
   if (kind === "local") {
+    const base = localBaseUrl.replace(/\/+$/, "");
     return {
-      shop: fileUrl("shop", "index.html"),
-      tables: fileUrl("tables.html"),
+      shop: `${base}/shop/index.html`,
+      tables: `${base}/tables.html`,
     };
   }
   return {

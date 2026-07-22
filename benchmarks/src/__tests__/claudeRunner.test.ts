@@ -1,5 +1,47 @@
 import { describe, it, expect } from "vitest";
-import { parseClaudeOutput } from "../claudeRunner.js";
+import { parseClaudeOutput, injectPlaywrightExecutablePath } from "../claudeRunner.js";
+
+describe("injectPlaywrightExecutablePath", () => {
+  const base = JSON.stringify({
+    mcpServers: {
+      playwright: { command: "npx", args: ["-y", "@playwright/mcp@0.0.78", "--headless"] },
+    },
+  });
+
+  it("execPath 未指定なら元の JSON をそのまま返す", () => {
+    expect(injectPlaywrightExecutablePath(base, undefined)).toBe(base);
+    expect(injectPlaywrightExecutablePath(base, "")).toBe(base);
+  });
+
+  it("execPath 指定時は --executable-path を args 末尾に注入する", () => {
+    const out = injectPlaywrightExecutablePath(base, "/opt/pw-browsers/chromium");
+    const parsed = JSON.parse(out) as { mcpServers: { playwright: { args: string[] } } };
+    const args = parsed.mcpServers.playwright.args;
+    expect(args).toContain("--executable-path");
+    expect(args[args.indexOf("--executable-path") + 1]).toBe("/opt/pw-browsers/chromium");
+    // 既存の引数は保持される
+    expect(args).toContain("--headless");
+    expect(args).toContain("@playwright/mcp@0.0.78");
+  });
+
+  it("既に --executable-path があれば二重注入しない", () => {
+    const withExec = JSON.stringify({
+      mcpServers: {
+        playwright: { command: "npx", args: ["-y", "@playwright/mcp", "--executable-path", "/x"] },
+      },
+    });
+    expect(injectPlaywrightExecutablePath(withExec, "/other")).toBe(withExec);
+  });
+
+  it("playwright サーバー定義が無ければ元のまま", () => {
+    const other = JSON.stringify({ mcpServers: { smallright: { args: ["a"] } } });
+    expect(injectPlaywrightExecutablePath(other, "/x")).toBe(other);
+  });
+
+  it("壊れた JSON は元のまま返す", () => {
+    expect(injectPlaywrightExecutablePath("{not json", "/x")).toBe("{not json");
+  });
+});
 
 // B-2: usage 欠落・非有限数 → is_error=true の挙動を検証する
 // spawn をモックせず parseClaudeOutput 純粋関数を直接テストする

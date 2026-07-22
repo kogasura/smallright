@@ -1,4 +1,5 @@
 node_modules/
 .runtmp/
+.playwright-mcp/
 results/results.json
 results/results.md
