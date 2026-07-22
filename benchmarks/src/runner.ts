@@ -1,7 +1,13 @@
 import * as path from "node:path";
 import { runClaude, type RunResult } from "./claudeRunner.js";
 import { contextTokens, billableTokens } from "./report.js";
-import { scenarios, judge, type Scenario } from "./scenarios.js";
+import {
+  scenarios,
+  judgeScenario,
+  targetUrls,
+  type Scenario,
+  type TargetKind,
+} from "./scenarios.js";
 import { dirFromMetaUrl } from "./paths.js";
 
 const CONFIGS_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "configs");
@@ -40,6 +46,8 @@ export interface RunRecord {
   total_cost_usd: number;
   is_error: boolean;
   success: boolean;
+  /** 失敗した場合の判定理由。成功時は undefined */
+  failure_reason?: string;
   raw_error?: string;
 }
 
@@ -48,6 +56,8 @@ export interface RunnerOptions {
   model: string;
   scenarioIds?: string[];
   mcpKeys?: Array<"smallright" | "playwright">;
+  /** 計測対象サイト。既定は local（同梱フィクスチャ） */
+  target?: TargetKind;
 }
 
 /** ms 待機するユーティリティ */
@@ -69,6 +79,8 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
       ? mcpTargets.filter((m) => opts.mcpKeys!.includes(m.key))
       : mcpTargets;
 
+  const urls = targetUrls(opts.target ?? "local");
+
   const records: RunRecord[] = [];
   const totalRuns = targetScenarios.length * targetMcps.length * opts.repeat;
   let runCount = 0;
@@ -88,7 +100,7 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
         );
 
         const result: RunResult = await runClaude({
-          prompt: scenario.prompt,
+          prompt: scenario.buildPrompt(urls),
           mcpConfigPath: mcp.configPath,
           model: opts.model,
           allowedTools: mcp.toolGlob,
@@ -100,7 +112,10 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
           result.usage.cache_creation_input_tokens +
           result.usage.cache_read_input_tokens;
 
-        const success = result.is_error ? false : judge(result.result, scenario.successIncludes);
+        const judged = result.is_error
+          ? { success: false, reason: "run がエラー終了" }
+          : judgeScenario(result.result, scenario);
+        const success = judged.success;
 
         const record: RunRecord = {
           scenario_id: scenario.id,
@@ -122,6 +137,9 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
         if (result.raw_error !== undefined) {
           record.raw_error = result.raw_error;
         }
+        if (!success && judged.reason !== null) {
+          record.failure_reason = judged.reason;
+        }
 
         records.push(record);
 
@@ -130,6 +148,9 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
         console.log(
           `  -> ${statusIcon} | context=${contextTokens(record)} billable=${Math.round(billableTokens(record))} total=${totalTokens} (in=${result.usage.input_tokens} out=${result.usage.output_tokens}) | turns=${result.num_turns} | cost=$${result.total_cost_usd.toFixed(4)}`
         );
+        if (statusIcon === "FAIL" && judged.reason !== null) {
+          console.log(`     reason: ${judged.reason}`);
+        }
 
         // 最後の run 以外は待機
         if (runCount < totalRuns) {

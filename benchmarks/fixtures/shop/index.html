@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Swag Labs</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="login_container">
+      <div class="login_logo">Swag Labs</div>
+      <form id="login-form" class="login-box">
+        <input
+          type="text"
+          id="user-name"
+          name="user-name"
+          placeholder="Username"
+          autocomplete="off"
+        />
+        <input
+          type="password"
+          id="password"
+          name="password"
+          placeholder="Password"
+          autocomplete="off"
+        />
+        <input type="submit" id="login-button" value="Login" />
+        <h3 id="login-error" data-test="error" hidden></h3>
+      </form>
+      <div class="login_credentials">
+        <h4>Accepted usernames are:</h4>
+        <p>standard_user</p>
+        <h4>Password for all users:</h4>
+        <p>secret_sauce</p>
+      </div>
+    </div>
+    <script src="app.js"></script>
+    <script>
+      document.getElementById("login-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const user = document.getElementById("user-name").value.trim();
+        const pass = document.getElementById("password").value;
+        const err = document.getElementById("login-error");
+
+        if (user === "standard_user" && pass === "secret_sauce") {
+          Shop.setUser(user);
+          location.href = "inventory.html";
+          return;
+        }
+        err.hidden = false;
+        err.textContent =
+          "Epic sadface: Username and password do not match any user in this service";
+      });
+    </script>
+  </body>
+</html>

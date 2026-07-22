@@ -42,7 +42,7 @@ const RUNTMP_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", ".runtmp"
  * 実際の絶対パスに置換した一時 config ファイルを生成して返す。
  * playwright.mcp.json はそのままコピーして返す。
  */
-function resolveMcpConfig(configPath: string): string {
+export function resolveMcpConfig(configPath: string): string {
   const raw = fs.readFileSync(configPath, "utf-8");
 
   // プレースホルダが含まれている場合は置換する
@@ -64,6 +64,18 @@ function resolveMcpConfig(configPath: string): string {
 function ensureRuntmpDir(): string {
   fs.mkdirSync(RUNTMP_DIR, { recursive: true });
   return RUNTMP_DIR;
+}
+
+/**
+ * shell: true で起動するため、args はシェルに文字列として渡される。
+ * グロブ (`*`) やスペースを含む値がシェルに解釈されないよう引用する。
+ *
+ * Windows の cmd.exe は単一引用符を解釈しないため二重引用符を使う。
+ * 値に二重引用符自体が含まれるケースは想定していない（config パスと
+ * ツール名グロブのみを渡すため）が、含まれていた場合は除去する。
+ */
+export function shellQuote(value: string): string {
+  return `"${value.replace(/"/g, "")}"`;
 }
 
 /**
@@ -167,19 +179,20 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
   // プロンプトは stdin で渡すため args には含めない
   // resolvedConfig の絶対パスにスペースが含まれる場合も shell 経由で
   // 引数として渡すため引用符で保護する
-  const configArg =
-    resolvedConfig.includes(" ") ? `"${resolvedConfig}"` : resolvedConfig;
+  const configArg = shellQuote(resolvedConfig);
 
   const args = [
     "--print",
     "--mcp-config",
     configArg,
     "--model",
-    opts.model,
+    shellQuote(opts.model),
     "--output-format",
     "json",
     "--allowedTools",
-    opts.allowedTools,
+    // mcp__smallright__* のようなグロブを含む。shell: true のため引用しないと
+    // cwd の内容によってはシェルがワイルドカード展開してしまう
+    shellQuote(opts.allowedTools),
     "--dangerously-skip-permissions",
   ];
 

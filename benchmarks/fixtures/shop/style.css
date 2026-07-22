@@ -1,0 +1,174 @@
+/* ベンチマーク用フィクスチャの最小スタイル。
+   見た目の再現は目的ではないが、DOM 構造が現実的な密度になるよう
+   ヘッダー・フッター・リスト構造は保っている。 */
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0;
+  color: #132322;
+  background: #f5f5f5;
+}
+
+.primary_header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #132322;
+  color: #fff;
+}
+
+.app_logo,
+.login_logo {
+  font-weight: 700;
+  font-size: 20px;
+}
+
+.login_logo {
+  color: #132322;
+  text-align: center;
+  margin: 40px 0 24px;
+}
+
+.login_container {
+  max-width: 360px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.login-box input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #d6d6d6;
+}
+
+#login-button {
+  background: #3ddc91;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#login-error {
+  color: #e2231a;
+  font-size: 14px;
+}
+
+.login_credentials {
+  margin-top: 32px;
+  font-size: 13px;
+  color: #4c4c4c;
+}
+
+.header_secondary_container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #132322;
+  color: #fff;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.inventory_list,
+.cart_list {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.inventory_item,
+.cart_item {
+  display: flex;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid #e2e2e2;
+}
+
+.img_placeholder {
+  width: 100px;
+  height: 100px;
+  background: #d6d6d6;
+}
+
+.inventory_item_name {
+  font-weight: 600;
+}
+
+.inventory_item_desc {
+  font-size: 13px;
+  color: #4c4c4c;
+  margin: 6px 0;
+}
+
+.pricebar,
+.item_pricebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn_inventory,
+.btn_secondary {
+  border: 1px solid #132322;
+  background: #fff;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.cart-badge {
+  background: #e2231a;
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.cart_footer,
+.checkout_buttons {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  gap: 12px;
+}
+
+.checkout_info {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.checkout_info label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.checkout_info input[type="text"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 16px;
+  padding: 10px;
+  border: 1px solid #d6d6d6;
+}
+
+.footer {
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+  color: #4c4c4c;
+}
+
+nav a {
+  color: #fff;
+  text-decoration: none;
+}

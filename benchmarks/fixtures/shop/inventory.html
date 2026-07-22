@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Swag Labs - Products</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="primary_header">
+      <div class="app_logo">Swag Labs</div>
+      <nav>
+        <a id="shopping-cart-link" href="cart.html">Cart</a>
+      </nav>
+    </header>
+
+    <div class="header_secondary_container">
+      <span class="title">Products</span>
+      <select class="product_sort_container" aria-label="sort">
+        <option value="az">Name (A to Z)</option>
+        <option value="za">Name (Z to A)</option>
+        <option value="lohi">Price (low to high)</option>
+        <option value="hilo">Price (high to low)</option>
+      </select>
+    </div>
+
+    <div id="inventory_container" class="inventory_list"></div>
+
+    <footer class="footer">
+      <p>&copy; 2026 Swag Labs (benchmark fixture). All Rights Reserved.</p>
+    </footer>
+
+    <script src="app.js"></script>
+    <script>
+      const container = document.getElementById("inventory_container");
+
+      container.innerHTML = Shop.PRODUCTS.map(
+        (p) => `
+        <div class="inventory_item" data-product="${p.id}">
+          <div class="inventory_item_img">
+            <div class="img_placeholder" aria-hidden="true"></div>
+          </div>
+          <div class="inventory_item_description">
+            <div class="inventory_item_label">
+              <div class="inventory_item_name">${p.name}</div>
+              <div class="inventory_item_desc">
+                A carry-all case for the modern professional. Durable, lightweight
+                and roomy enough for everything you need on the go.
+              </div>
+            </div>
+            <div class="pricebar">
+              <div class="inventory_item_price">$${p.price.toFixed(2)}</div>
+              <button class="btn_inventory" data-add="${p.id}">Add to cart</button>
+            </div>
+          </div>
+        </div>`
+      ).join("");
+
+      container.addEventListener("click", (e) => {
+        const id = e.target.getAttribute?.("data-add");
+        if (!id) return;
+        const next = Shop.cart().concat(id);
+        location.href = Shop.withState("inventory.html", { cart: next.join(",") });
+      });
+
+      Shop.renderCartBadge();
+    </script>
+  </body>
+</html>

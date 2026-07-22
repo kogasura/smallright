@@ -8,6 +8,8 @@ import {
   minSuccessRequired,
   reductionBlockedReason,
   parsePlaywrightMcpVersion,
+  generateMarkdown,
+  pct,
   contextTokens,
   billableTokens,
   CACHE_WRITE_WEIGHT,
@@ -454,5 +456,92 @@ describe("aggregate - 指標ごとに削減率を出す", () => {
     expect(cmp?.token_reduction_pct).toBeNull();
     expect(cmp?.billable_reduction_pct).toBeNull();
     expect(cmp?.cost_reduction_pct).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 表示フォーマット
+// ---------------------------------------------------------------------------
+
+describe("pct", () => {
+  it("削減はマイナス表記（トークンが減った）", () => {
+    expect(pct(30)).toBe("-30.0%");
+  });
+
+  it("増加はプラス表記（トークンが増えた）", () => {
+    expect(pct(-12.3)).toBe("+12.3%");
+  });
+
+  it("変化なしは ± 表記", () => {
+    expect(pct(0)).toBe("±0.0%");
+  });
+
+  it("算出不能は N/A", () => {
+    expect(pct(null)).toBe("N/A");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Markdown 生成
+// ---------------------------------------------------------------------------
+
+describe("generateMarkdown", () => {
+  const baseRecords: RunRecord[] = [
+    makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+    makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+    makeRecord({ mcp_key: "playwright", total_tokens: 1000, success: true, is_error: false }),
+    makeRecord({ mcp_key: "playwright", total_tokens: 1000, success: true, is_error: false }),
+  ];
+
+  it("主要セクションをすべて含む", () => {
+    const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
+    expect(md).toContain("# Benchmark Results");
+    expect(md).toContain("## Scenario Results");
+    expect(md).toContain("## Detailed Stats");
+    expect(md).toContain("## Overall Summary");
+    expect(md).toContain("### Metrics");
+  });
+
+  it("シナリオ名と削減率を表に出す", () => {
+    const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
+    expect(md).toContain("Scenario 1");
+    // 700 vs 1000 -> 30% 削減 = -30.0%
+    expect(md).toContain("-30.0%");
+  });
+
+  it("成功 run 数を Overall Summary に併記する", () => {
+    const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
+    expect(md).toContain("2 / 2");
+  });
+
+  it("削減率を抑制した場合は理由を書く", () => {
+    const skewed: RunRecord[] = [
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 800, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 0, success: false, is_error: true }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 0, success: false, is_error: true }),
+    ];
+    const md = generateMarkdown(aggregate(skewed, "sonnet"));
+    expect(md).toContain("削減率は算出していません");
+    expect(md).toContain("### 削減率を算出しなかったシナリオ");
+    expect(md).toContain("N/A");
+  });
+
+  it("Markdown の表が壊れていない（行頭と行末が | ）", () => {
+    const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
+    const tableRows = md.split("\n").filter((l) => l.startsWith("|"));
+    expect(tableRows.length).toBeGreaterThan(5);
+    for (const row of tableRows) {
+      expect(row.endsWith("|")).toBe(true);
+    }
+  });
+
+  it("メタ情報を含む", () => {
+    const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
+    expect(md).toContain("**Model**: sonnet");
+    expect(md).toContain("**@playwright/mcp**:");
+    expect(md).toContain("**OS**:");
   });
 });
