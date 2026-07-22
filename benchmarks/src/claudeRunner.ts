@@ -27,6 +27,11 @@ export interface RunOptions {
   allowedTools: string;
   /** 子プロセスを強制終了するまでの上限 (ms)。未指定時は DEFAULT_RUN_TIMEOUT_MS */
   timeoutMs?: number;
+  /**
+   * 組み込みツール (Read / Bash / Glob / Grep / WebFetch など) を無効化するか。
+   * 既定 true。false にすると計測が成立しなくなるので、通常は変更しない。
+   */
+  disableBuiltinTools?: boolean;
 }
 
 /** 1 run あたりの上限時間 (ms)。これを超えたら子プロセスを kill して is_error にする */
@@ -76,6 +81,55 @@ function ensureRuntmpDir(): string {
  */
 export function shellQuote(value: string): string {
   return `"${value.replace(/"/g, "")}"`;
+}
+
+/**
+ * claude CLI に渡す引数を組み立てる。
+ *
+ * プロンプトは stdin で渡すため args には含めない。
+ * 値はすべて shellQuote で保護する（spawn を shell: true で呼ぶため）。
+ *
+ * ## なぜ組み込みツールを無効化するのか
+ *
+ * `--allowedTools` は許可リストを追加するだけで、他のツールを禁止しない。
+ * `--dangerously-skip-permissions` と併用すると、エージェントは Read / Bash /
+ * Glob / Grep / WebFetch を自由に使える。
+ *
+ * その状態では「ブラウザを操作するより HTML を直接読んだ方が早い」と判断され、
+ * ブラウザ MCP を経由せずにタスクを達成できてしまう。ローカルフィクスチャは
+ * ディスク上のただのファイルなので特にそうなりやすい。
+ * こうなると測っているのはブラウザ MCP のトークン効率ではなくなり、
+ * 両者の差が消える。
+ *
+ * そのため `--tools ""` で組み込みツールを全て落とし、MCP ツールだけを残す。
+ * 個別の禁止リストではなく一括無効化にしているのは、CLI に新しい組み込み
+ * ツールが追加されても抜け道が増えないようにするため。
+ */
+export function buildClaudeArgs(opts: RunOptions, resolvedConfigPath: string): string[] {
+  const args = [
+    "--print",
+    "--mcp-config",
+    shellQuote(resolvedConfigPath),
+    // 設定ファイルに書いた MCP サーバーだけを使う。ユーザーのグローバル設定に
+    // 別の MCP サーバーがあると計測に混入するため
+    "--strict-mcp-config",
+    "--model",
+    shellQuote(opts.model),
+    "--output-format",
+    "json",
+    "--allowedTools",
+    // mcp__smallright__* のようなグロブを含む。shell: true のため引用しないと
+    // cwd の内容によってはシェルがワイルドカード展開してしまう
+    shellQuote(opts.allowedTools),
+  ];
+
+  if (opts.disableBuiltinTools !== false) {
+    // 空文字列 = 組み込みツールを全て無効化（MCP ツールは残る）
+    args.push("--tools", shellQuote(""));
+  }
+
+  args.push("--dangerously-skip-permissions");
+  return args;
 }
 
 /**
@@ -176,25 +230,7 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
     }
   }
 
-  // プロンプトは stdin で渡すため args には含めない
-  // resolvedConfig の絶対パスにスペースが含まれる場合も shell 経由で
-  // 引数として渡すため引用符で保護する
-  const configArg = shellQuote(resolvedConfig);
-
-  const args = [
-    "--print",
-    "--mcp-config",
-    configArg,
-    "--model",
-    shellQuote(opts.model),
-    "--output-format",
-    "json",
-    "--allowedTools",
-    // mcp__smallright__* のようなグロブを含む。shell: true のため引用しないと
-    // cwd の内容によってはシェルがワイルドカード展開してしまう
-    shellQuote(opts.allowedTools),
-    "--dangerously-skip-permissions",
-  ];
+  const args = buildClaudeArgs(opts, resolvedConfig);
 
   const claudeCmd = "claude";
   const timeoutMs = opts.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;

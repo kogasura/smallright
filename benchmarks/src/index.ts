@@ -12,6 +12,7 @@ export interface CliArgs {
   repeat: number;
   model: string;
   target: TargetKind;
+  skipPreflight: boolean;
   scenarioIds?: string[];
   mcpKeys?: Array<"smallright" | "playwright">;
 }
@@ -22,6 +23,7 @@ export function parseArgs(argv: string[]): CliArgs {
     model: "sonnet",
     // 既定はローカルフィクスチャ。外部サイトの仕様変更に結果が左右されないようにする
     target: "local",
+    skipPreflight: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -61,6 +63,8 @@ export function parseArgs(argv: string[]): CliArgs {
         }
       }
       i++;
+    } else if (arg === "--skip-preflight") {
+      args.skipPreflight = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -87,6 +91,7 @@ Options:
                      Valid: ${scenarios.map((s) => s.id).join(", ")}
   --mcp <key>        Run specific MCP(s), comma-separated
                      Valid: ${mcpTargets.map((m) => m.key).join(", ")}
+  --skip-preflight   Skip the MCP connectivity check (not recommended)
   --help, -h         Show this help
 
 Examples:
@@ -111,6 +116,7 @@ async function main(): Promise<void> {
   console.log(`repeat  : ${cliArgs.repeat}`);
   console.log(`model   : ${cliArgs.model}`);
   console.log(`target  : ${cliArgs.target}`);
+  console.log(`preflight: ${cliArgs.skipPreflight ? "skipped" : "enabled"}`);
   console.log(`scenario: ${cliArgs.scenarioIds?.join(", ") ?? "all"}`);
   console.log(`mcp     : ${cliArgs.mcpKeys?.join(", ") ?? "all"}`);
   console.log("");
@@ -119,6 +125,7 @@ async function main(): Promise<void> {
     repeat: cliArgs.repeat,
     model: cliArgs.model,
     target: cliArgs.target,
+    skipPreflight: cliArgs.skipPreflight,
     scenarioIds: cliArgs.scenarioIds,
     mcpKeys: cliArgs.mcpKeys,
   });
