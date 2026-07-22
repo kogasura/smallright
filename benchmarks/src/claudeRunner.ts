@@ -43,23 +43,73 @@ const KILL_GRACE_MS = 5_000;
 const RUNTMP_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", ".runtmp");
 
 /**
- * smallright.mcp.json 内の {{SMALLRIGHT_DIST}} プレースホルダを
- * 実際の絶対パスに置換した一時 config ファイルを生成して返す。
- * playwright.mcp.json はそのままコピーして返す。
+ * playwright の MCP に使わせるブラウザ実行ファイルを差し込むための env 変数。
+ *
+ * @playwright/mcp は既定でシステムの Chrome チャンネル
+ * (/opt/google/chrome/chrome) を起動しようとする。それが無い環境
+ * （CI・サンドボックス等で Playwright のバンドル chromium だけが用意されて
+ * いる場合）では起動に失敗する。この env にバイナリのパスを設定すると、
+ * playwright の MCP 起動引数へ `--executable-path <path>` を注入し、
+ * 用意済みのブラウザを使わせる。未設定なら既定動作のまま。
+ */
+export const PLAYWRIGHT_EXECUTABLE_PATH_ENV = "PLAYWRIGHT_MCP_EXECUTABLE_PATH";
+
+/**
+ * playwright の MCP config に `--executable-path` を注入する純粋関数。
+ *
+ * - execPath が未指定なら元の JSON をそのまま返す（変更なし）。
+ * - 既に `--executable-path` が含まれていれば二重指定しない。
+ * - playwright サーバー定義が無い、または JSON として壊れている場合も元のまま。
+ */
+export function injectPlaywrightExecutablePath(raw: string, execPath: string | undefined): string {
+  if (execPath === undefined || execPath === "") return raw;
+
+  let parsed: {
+    mcpServers?: Record<string, { args?: unknown }>;
+  };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+
+  const pw = parsed.mcpServers?.["playwright"];
+  if (pw === undefined || !Array.isArray(pw.args)) return raw;
+  if (pw.args.includes("--executable-path")) return raw;
+
+  pw.args = [...pw.args, "--executable-path", execPath];
+  return JSON.stringify(parsed, null, 2);
+}
+
+/**
+ * MCP config を実行用に解決する。
+ *
+ * - smallright.mcp.json の {{SMALLRIGHT_DIST}} プレースホルダを絶対パスに置換する。
+ * - playwright.mcp.json は、PLAYWRIGHT_MCP_EXECUTABLE_PATH が設定されていれば
+ *   `--executable-path` を注入する。
+ * どちらの変換も不要なら元の configPath をそのまま返す。
  */
 export function resolveMcpConfig(configPath: string): string {
   const raw = fs.readFileSync(configPath, "utf-8");
 
-  // プレースホルダが含まれている場合は置換する
+  // smallright: dist の絶対パスを埋め込む
   if (raw.includes("{{SMALLRIGHT_DIST}}")) {
     const repoRoot = path.resolve(dirFromMetaUrl(import.meta.url), "..", "..");
     const distPath = path.join(repoRoot, "dist", "index.js");
     const resolved = raw.replace(/\{\{SMALLRIGHT_DIST\}\}/g, distPath.replace(/\\/g, "/"));
 
-    // ディレクトリ生成は ensureRuntmpDir に委ねる
     const dir = ensureRuntmpDir();
     const tmpFile = path.join(dir, `smallright-${Date.now()}.mcp.json`);
     fs.writeFileSync(tmpFile, resolved, "utf-8");
+    return tmpFile;
+  }
+
+  // playwright: 実行ファイルパスの注入（env 指定時のみ）
+  const injected = injectPlaywrightExecutablePath(raw, process.env[PLAYWRIGHT_EXECUTABLE_PATH_ENV]);
+  if (injected !== raw) {
+    const dir = ensureRuntmpDir();
+    const tmpFile = path.join(dir, `playwright-${Date.now()}.mcp.json`);
+    fs.writeFileSync(tmpFile, injected, "utf-8");
     return tmpFile;
   }
 

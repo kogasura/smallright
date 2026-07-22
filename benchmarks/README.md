@@ -58,6 +58,19 @@ npm run bench -- --scenario login --mcp smallright
 npm run bench -- --model claude-sonnet-4-5
 ```
 
+### ブラウザが用意されていない環境（CI / サンドボックス）
+
+@playwright/mcp は既定でシステムの Chrome チャンネル
+(`/opt/google/chrome/chrome`) を起動しようとします。それが無く、Playwright の
+バンドル chromium だけがある環境では、`PLAYWRIGHT_MCP_EXECUTABLE_PATH` に
+ブラウザバイナリのパスを渡すと、playwright 側の MCP へ `--executable-path` を
+注入して既存ブラウザを使わせます（smallright 側はバンドル chromium を自動使用）。
+
+```bash
+# 例: Playwright のバンドル chromium を指す
+PLAYWRIGHT_MCP_EXECUTABLE_PATH=/opt/pw-browsers/chromium npm run bench
+```
+
 ## 対象サイト
 
 外部の公開サイトに依存すると、サイトの仕様変更・障害・ネットワーク遅延で結果が変わり、
@@ -65,15 +78,22 @@ npm run bench -- --model claude-sonnet-4-5
 
 ### local（既定）
 
-`benchmarks/fixtures/` 配下の静的 HTML を `file://` で開きます。サーバー不要。
+`benchmarks/fixtures/` 配下の静的 HTML を、実行時に立てる軽量 HTTP サーバー
+（`http://127.0.0.1:<ランダムポート>`）で配信して開きます。外部ネットワークには
+一切依存しません。
+
+> **なぜ file:// ではなく http か**
+> smallright の `navigate` は http/https 以外のスキームを受け付けない
+> （browser-manager が `Unsupported protocol` で弾く）ため、`file://` では
+> 開けません。両 MCP を同一条件で開けるよう、ローカルフィクスチャも http で
+> 配信します。ポートは OS に採番させるので既存プロセスと衝突しません。
 
 | 対象 | ファイル | 内容 |
 |------|---------|------|
 | shop | `fixtures/shop/index.html` | ログイン → 商品一覧 → カート → チェックアウト情報入力 |
 | tables | `fixtures/tables.html` | 2 つのデータテーブル |
 
-ページ間の状態は URL のクエリ文字列で受け渡しています（`file://` では
-localStorage のオリジン扱いがブラウザ依存のため）。
+ページ間の状態は URL のクエリ文字列で受け渡しています。
 
 ```bash
 npm run bench                      # local（既定）
@@ -96,7 +116,7 @@ npm run bench -- --target remote
 ### 固定バージョン
 
 @playwright/mcp のバージョンは `configs/playwright.mcp.json` の `args` で指定し、
-レポートにはそこから読み取った値を出力します（現在: **0.0.29**）。
+レポートにはそこから読み取った値を出力します（現在: **0.0.78**）。
 
 ## シナリオ
 

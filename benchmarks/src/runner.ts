@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { runClaude, type RunResult } from "./claudeRunner.js";
 import { contextTokens, billableTokens } from "./report.js";
-import { preflightMcp, formatPreflightFailure } from "./preflight.js";
+import { preflightMcp, formatPreflightFailure, type PreflightResult } from "./preflight.js";
 import {
   scenarios,
   judgeScenario,
@@ -10,6 +10,7 @@ import {
   type TargetKind,
 } from "./scenarios.js";
 import { dirFromMetaUrl } from "./paths.js";
+import { startFixtureServer, type FixtureServer } from "./fixtureServer.js";
 
 const CONFIGS_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "configs");
 
@@ -72,6 +73,39 @@ function sleep(ms: number): Promise<void> {
 const INTER_RUN_WAIT_MS = 5_000;
 
 export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
+  const target = opts.target ?? "local";
+
+  // local ターゲットは同梱フィクスチャを http で配信する。
+  // smallright は file:// を開けないため、両 MCP が同一 URL を開けるよう
+  // HTTP サーバーを立て、その baseUrl から URL を組み立てる。
+  let fixtureServer: FixtureServer | undefined;
+  let urls;
+  if (target === "local") {
+    fixtureServer = await startFixtureServer();
+    urls = targetUrls("local", fixtureServer.baseUrl);
+    console.log(`ローカルフィクスチャ配信: ${fixtureServer.baseUrl}`);
+  } else {
+    urls = targetUrls(target);
+  }
+
+  try {
+    return await runScenarios(opts, urls, fixtureServer);
+  } finally {
+    if (fixtureServer) {
+      await fixtureServer.close();
+    }
+  }
+}
+
+/**
+ * 実際のシナリオ実行ループ。フィクスチャサーバーの後始末を runBenchmark 側の
+ * finally に任せるため、本体を分離している。
+ */
+async function runScenarios(
+  opts: RunnerOptions,
+  urls: ReturnType<typeof targetUrls>,
+  _fixtureServer: FixtureServer | undefined
+): Promise<RunRecord[]> {
   const targetScenarios: Scenario[] =
     opts.scenarioIds && opts.scenarioIds.length > 0
       ? scenarios.filter((s) => opts.scenarioIds!.includes(s.id))
@@ -82,13 +116,17 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
       ? mcpTargets.filter((m) => opts.mcpKeys!.includes(m.key))
       : mcpTargets;
 
-  const urls = targetUrls(opts.target ?? "local");
-
   // MCP が繋がっていないまま走ると、エージェントは別の手段でタスクを解こうとし、
   // それらしい数字が出てしまう。実行前に 1 回だけ確認して落とす。
   if (opts.skipPreflight !== true) {
     console.log("MCP 接続を確認しています...");
-    const results = await Promise.all(targetMcps.map((m) => preflightMcp(m, opts.model)));
+    // 逐次実行する。複数の claude 子プロセス（＋stdio MCP サーバー）を同時に
+    // 起動すると、起動時の競合で MCP 接続が間に合わず、実際は繋がる構成でも
+    // ツールが 0 件に見える false negative が起きる。1 つずつ確認する。
+    const results: PreflightResult[] = [];
+    for (const m of targetMcps) {
+      results.push(await preflightMcp(m, opts.model));
+    }
 
     for (const r of results) {
       console.log(`  ${r.ok ? "OK" : "NG"} ${r.mcp_key}: ${r.ok ? `${r.tool_count} tools` : r.reason}`);
