@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { runClaude, type RunResult } from "./claudeRunner.js";
 import { contextTokens, billableTokens } from "./report.js";
+import { preflightMcp, formatPreflightFailure } from "./preflight.js";
 import {
   scenarios,
   judgeScenario,
@@ -58,6 +59,8 @@ export interface RunnerOptions {
   mcpKeys?: Array<"smallright" | "playwright">;
   /** 計測対象サイト。既定は local（同梱フィクスチャ） */
   target?: TargetKind;
+  /** 事前チェック（MCP 接続確認）を飛ばす。既定 false */
+  skipPreflight?: boolean;
 }
 
 /** ms 待機するユーティリティ */
@@ -80,6 +83,23 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
       : mcpTargets;
 
   const urls = targetUrls(opts.target ?? "local");
+
+  // MCP が繋がっていないまま走ると、エージェントは別の手段でタスクを解こうとし、
+  // それらしい数字が出てしまう。実行前に 1 回だけ確認して落とす。
+  if (opts.skipPreflight !== true) {
+    console.log("MCP 接続を確認しています...");
+    const results = await Promise.all(targetMcps.map((m) => preflightMcp(m, opts.model)));
+
+    for (const r of results) {
+      console.log(`  ${r.ok ? "OK" : "NG"} ${r.mcp_key}: ${r.ok ? `${r.tool_count} tools` : r.reason}`);
+    }
+
+    const failures = results.filter((r) => !r.ok);
+    if (failures.length > 0) {
+      throw new Error(formatPreflightFailure(failures));
+    }
+    console.log("");
+  }
 
   const records: RunRecord[] = [];
   const totalRuns = targetScenarios.length * targetMcps.length * opts.repeat;
