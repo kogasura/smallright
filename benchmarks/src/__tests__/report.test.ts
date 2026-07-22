@@ -8,6 +8,10 @@ import {
   minSuccessRequired,
   reductionBlockedReason,
   parsePlaywrightMcpVersion,
+  contextTokens,
+  billableTokens,
+  CACHE_WRITE_WEIGHT,
+  CACHE_READ_WEIGHT,
 } from "../report.js";
 import type { RunRecord } from "../runner.js";
 
@@ -321,5 +325,134 @@ describe("parsePlaywrightMcpVersion", () => {
 
   it("不正な JSON でも例外を投げず unknown を返す", () => {
     expect(parsePlaywrightMcpVersion("{ broken")).toBe("unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// トークン指標
+// ---------------------------------------------------------------------------
+
+describe("contextTokens", () => {
+  it("キャッシュ経由の入力も含めて合計する", () => {
+    expect(
+      contextTokens({
+        input_tokens: 100,
+        cache_creation_input_tokens: 200,
+        cache_read_input_tokens: 300,
+      })
+    ).toBe(600);
+  });
+
+  it("output は含めない（モデルに渡した入力ではないため）", () => {
+    const r = {
+      input_tokens: 100,
+      output_tokens: 999,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    expect(contextTokens(r)).toBe(100);
+  });
+});
+
+describe("billableTokens", () => {
+  it("キャッシュの課金係数を掛けて合計する", () => {
+    const r = {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_creation_input_tokens: 400,
+      cache_read_input_tokens: 1000,
+    };
+    // 100 + 50 + 400*1.25 + 1000*0.1 = 100 + 50 + 500 + 100 = 750
+    expect(billableTokens(r)).toBe(750);
+    expect(CACHE_WRITE_WEIGHT).toBe(1.25);
+    expect(CACHE_READ_WEIGHT).toBe(0.1);
+  });
+
+  it("キャッシュ読み出しが多いほど単純合計と乖離する", () => {
+    const r = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 10_000,
+    };
+    const naiveTotal = 10_000;
+    // 単純合計では 10,000 だが課金上は 1,000 相当
+    expect(billableTokens(r)).toBe(1_000);
+    expect(billableTokens(r)).toBeLessThan(naiveTotal);
+  });
+});
+
+describe("aggregate - 指標ごとに削減率を出す", () => {
+  it("キャッシュ構成が違う場合、context と billable で削減率が変わる", () => {
+    // smallright: キャッシュをほとんど使わず素の入力が少ない
+    // playwright: 素の入力は多いが大半がキャッシュ読み出し
+    const records: RunRecord[] = [
+      {
+        scenario_id: "s1",
+        scenario_name: "Scenario 1",
+        mcp_key: "smallright",
+        run_index: 0,
+        input_tokens: 1000,
+        output_tokens: 100,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        total_tokens: 1100,
+        num_turns: 2,
+        duration_ms: 1000,
+        total_cost_usd: 0.01,
+        is_error: false,
+        success: true,
+      },
+      {
+        scenario_id: "s1",
+        scenario_name: "Scenario 1",
+        mcp_key: "playwright",
+        run_index: 0,
+        input_tokens: 1000,
+        output_tokens: 100,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 9000,
+        total_tokens: 10100,
+        num_turns: 2,
+        duration_ms: 1000,
+        total_cost_usd: 0.02,
+        is_error: false,
+        success: true,
+      },
+    ];
+
+    const result = aggregate(records, "sonnet");
+    const cmp = result.comparisons.find((c) => c.scenario_id === "s1");
+
+    // context: smallright 1000 vs playwright 10000 -> 90% 削減
+    expect(cmp?.token_reduction_pct).toBeCloseTo(90);
+
+    // billable: smallright 1100 vs playwright 1100+900=2000 -> 45% 削減
+    // キャッシュ読み出しは 0.1 倍なので、context ほどの差にはならない
+    expect(cmp?.billable_reduction_pct).toBeCloseTo(45);
+
+    // cost: 0.01 vs 0.02 -> 50% 削減
+    expect(cmp?.cost_reduction_pct).toBeCloseTo(50);
+
+    // 単純合計は指標として残っているが比較には使わない
+    expect(cmp?.smallright?.total_tokens.median).toBe(1100);
+    expect(cmp?.playwright?.total_tokens.median).toBe(10100);
+  });
+
+  it("成功 run が偏っている場合は全指標の削減率が抑制される", () => {
+    const records: RunRecord[] = [
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 800, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 0, success: false, is_error: true }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 0, success: false, is_error: true }),
+    ];
+
+    const result = aggregate(records, "sonnet");
+    const cmp = result.comparisons.find((c) => c.scenario_id === "s1");
+    expect(cmp?.token_reduction_pct).toBeNull();
+    expect(cmp?.billable_reduction_pct).toBeNull();
+    expect(cmp?.cost_reduction_pct).toBeNull();
   });
 });

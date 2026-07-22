@@ -16,7 +16,7 @@ Claude (Sonnet) に**同一のブラウザ操作タスク**を与え、使用す
 | 項目 | 内容 |
 |------|------|
 | エージェント | Claude Sonnet (claude -p / ヘッドレス) |
-| 測定値 | usage.input_tokens / output_tokens / cache_{creation,read}_input_tokens の合計 |
+| 測定値 | usage.input_tokens / output_tokens / cache_{creation,read}_input_tokens（指標は下記参照） |
 | 差分 | 使用する MCP のみ。プロンプト・モデル・シナリオはすべて同一 |
 | ツール制限 | --allowedTools でブラウザ MCP ツールのみ許可 |
 | 成功判定 | レスポンステキストに期待文字列が含まれるか（大文字小文字無視・全包含） |
@@ -74,11 +74,32 @@ npm run bench -- --model claude-sonnet-4-5
 | table | テーブル読取 | "Smith", "jsmith@gmail.com" |
 | checkout | 複数ステップ: カート→チェックアウト情報入力 | "First Name", "Last Name", "Zip" |
 
+## トークン指標
+
+4 種類のトークン（input / output / cache_creation / cache_read）を単純合計しても、
+コストにもコンテキスト量にも対応しない中間的な数字にしかなりません。
+キャッシュ読み出しは課金上 input の約 1/10、書き込みは 1.25 倍だからです。
+
+そのため用途ごとに指標を分けています。
+
+| 指標 | 定義 | 何を表すか |
+|------|------|-----------|
+| **Context tokens**（主指標） | `input + cache_creation + cache_read` | モデルが実際に読んだ入力コンテキストの量。キャッシュ経由で渡された分も含む |
+| **Billable tokens** | `input + output + cache_creation × 1.25 + cache_read × 0.1` | 課金重みを掛けたトークン数（base input 換算） |
+| **Cost (USD)** | Claude CLI の `total_cost_usd` | 実コスト |
+| Total tokens | 4 種の単純合計 | 参考値。後方互換のため保持。比較には使わない |
+
+削減率の主指標は **Context tokens** です。smallright の主張は「LLM に渡すコンテキストを
+減らす」なので、これが最も直接に対応します。
+
+output トークンはモデルごとに単価が異なるため、Billable では重み付けせずそのまま
+加算しています。正確なコスト比較が必要な場合は `total_cost_usd` を見てください。
+
 ## 結果の見方
 
 `results/results.md` に表として出力されます。
 
-- **Token Reduction**: `(playwright_median - smallright_median) / playwright_median * 100`。正の値が削減（smallright の方が少ない）。
+- **Context / Billable / Cost Reduction**: `(playwright_median - smallright_median) / playwright_median * 100`。正の値が削減（smallright の方が少ない）。
 - **completion_rate**: エラーなく期待文字列を含むレスポンスを返せた割合。
 
 ### 削減率が N/A になる条件
