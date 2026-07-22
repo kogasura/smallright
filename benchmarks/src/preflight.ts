@@ -105,7 +105,7 @@ export function formatPreflightFailure(failures: PreflightResult[]): string {
     "",
     "確認すること:",
     "  - smallright: リポジトリルートで `npm run build` を実行し dist/index.js があるか",
-    "  - playwright: `npx -y @playwright/mcp@0.0.78 --help` が通るか（ネットワーク到達性）",
+    "  - playwright: `cd benchmarks && npm install` で @playwright/mcp が入っているか（node_modules）",
     "  - 実行環境が stdio の MCP サーバー起動を許可しているか",
     "",
     "チェック自体を飛ばす場合は --skip-preflight を付けてください（非推奨）。"

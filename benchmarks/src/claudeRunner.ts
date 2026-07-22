@@ -104,12 +104,24 @@ export function resolveMcpConfig(configPath: string): string {
     return tmpFile;
   }
 
-  // playwright: 実行ファイルパスの注入（env 指定時のみ）
-  const injected = injectPlaywrightExecutablePath(raw, process.env[PLAYWRIGHT_EXECUTABLE_PATH_ENV]);
-  if (injected !== raw) {
+  // playwright:
+  //   1) {{PLAYWRIGHT_MCP_CLI}} を、benchmarks 配下にインストールした
+  //      @playwright/mcp の cli.js の絶対パスへ置換する。
+  //      npx 起動はパッケージ解決に時間がかかり、MCP 接続がツール列挙に
+  //      間に合わず false negative（ツール0件）になるため、node で直接起動する。
+  //   2) PLAYWRIGHT_MCP_EXECUTABLE_PATH 指定時は --executable-path を注入する。
+  let resolved = raw;
+  if (resolved.includes("{{PLAYWRIGHT_MCP_CLI}}")) {
+    const benchRoot = path.resolve(dirFromMetaUrl(import.meta.url), "..");
+    const cliPath = path.join(benchRoot, "node_modules", "@playwright", "mcp", "cli.js");
+    resolved = resolved.replace(/\{\{PLAYWRIGHT_MCP_CLI\}\}/g, cliPath.replace(/\\/g, "/"));
+  }
+  resolved = injectPlaywrightExecutablePath(resolved, process.env[PLAYWRIGHT_EXECUTABLE_PATH_ENV]);
+
+  if (resolved !== raw) {
     const dir = ensureRuntmpDir();
     const tmpFile = path.join(dir, `playwright-${Date.now()}.mcp.json`);
-    fs.writeFileSync(tmpFile, injected, "utf-8");
+    fs.writeFileSync(tmpFile, resolved, "utf-8");
     return tmpFile;
   }
 

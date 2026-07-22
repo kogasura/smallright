@@ -323,12 +323,33 @@ export function parsePlaywrightMcpVersion(configJson: string): string {
 }
 
 function getPlaywrightMcpVersion(): string {
+  // まず config の args からバージョン指定を読む（npx 起動時の形式）。
+  // node で直接起動する場合は args にバージョンが無いので、
+  // インストール済み @playwright/mcp の package.json を参照する。
   try {
     const raw = fs.readFileSync(path.join(CONFIGS_DIR, "playwright.mcp.json"), "utf-8");
-    return parsePlaywrightMcpVersion(raw);
+    const fromConfig = parsePlaywrightMcpVersion(raw);
+    if (fromConfig !== "unknown" && fromConfig !== "latest") return fromConfig;
   } catch {
-    return "unknown";
+    // config が読めない場合は package.json 参照へフォールバック
   }
+
+  try {
+    const pkgPath = path.resolve(
+      dirFromMetaUrl(import.meta.url),
+      "..",
+      "node_modules",
+      "@playwright",
+      "mcp",
+      "package.json"
+    );
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { version?: string };
+    if (typeof pkg.version === "string") return pkg.version;
+  } catch {
+    // 参照できなければ unknown
+  }
+
+  return "unknown";
 }
 
 function getClaudeVersion(): string {

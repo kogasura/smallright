@@ -115,8 +115,13 @@ npm run bench -- --target remote
 
 ### 固定バージョン
 
-@playwright/mcp のバージョンは `configs/playwright.mcp.json` の `args` で指定し、
-レポートにはそこから読み取った値を出力します（現在: **0.0.78**）。
+@playwright/mcp は `benchmarks/package.json` の devDependency として固定し
+（現在: **0.0.78**）、`node` で直接起動します（`configs/playwright.mcp.json`）。
+かつては `npx -y @playwright/mcp@<version>` で起動していましたが、npx の
+パッケージ解決に時間がかかると MCP 接続がツール列挙に間に合わず、実際は
+繋がる構成でもツール 0 件と誤検知されることがあったため、インストール済みの
+`cli.js` を直接叩く方式に変更しました。レポートには package.json の
+バージョンを出力します。
 
 ## シナリオ
 
