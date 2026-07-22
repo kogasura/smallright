@@ -72,9 +72,15 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
   const totalRuns = targetScenarios.length * targetMcps.length * opts.repeat;
   let runCount = 0;
 
+  // MCP ごとにまとめて連続実行すると、レート制限の蓄積・時間帯によるサーバー
+  // 応答の変化・対象サイトの状態変化が後半の MCP に偏って乗る。
+  // repeat ごとに MCP を交互に回し、さらに 1 回おきに順序を反転させることで
+  // 「常に先に走る」側が生まれないようにする。
   for (const scenario of targetScenarios) {
-    for (const mcp of targetMcps) {
-      for (let i = 0; i < opts.repeat; i++) {
+    for (let i = 0; i < opts.repeat; i++) {
+      const orderedMcps = i % 2 === 0 ? targetMcps : [...targetMcps].reverse();
+
+      for (const mcp of orderedMcps) {
         runCount++;
         console.log(
           `[${runCount}/${totalRuns}] scenario=${scenario.id} mcp=${mcp.key} run=${i + 1}/${opts.repeat}`

@@ -6,6 +6,15 @@ import type { RunRecord } from "./runner.js";
 import { dirFromMetaUrl } from "./paths.js";
 
 const RESULTS_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "results");
+const CONFIGS_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "configs");
+
+/**
+ * 削減率を算出するために必要な成功 run の最低数。
+ * 全 run の半数（切り上げ）かつ 1 件以上を要求する。
+ */
+export function minSuccessRequired(count: number): number {
+  return Math.max(1, Math.ceil(count / 2));
+}
 
 // ---------------------------------------------------------------------------
 // 純粋関数: 統計計算
@@ -73,6 +82,8 @@ export interface ScenarioComparison {
   playwright: ScenarioMcpStats | null;
   /** 成功 run のトークン中央値ベースの削減率。算出不能の場合は null */
   token_reduction_pct: number | null;
+  /** 削減率を算出しなかった理由。算出できた場合は null */
+  reduction_suppressed_reason: string | null;
 }
 
 export interface AggregatedResult {
@@ -92,7 +103,44 @@ export interface AggregatedResult {
     playwright_median_total_tokens: number | null;
     /** 成功 run の中央値ベースの削減率。算出不能の場合は null */
     overall_token_reduction_pct: number | null;
+    /** 全シナリオ横断の run 数と成功 run 数 */
+    smallright_runs: number;
+    smallright_success_runs: number;
+    playwright_runs: number;
+    playwright_success_runs: number;
+    /** 削減率を算出しなかった理由。算出できた場合は null */
+    reduction_suppressed_reason: string | null;
   };
+}
+
+/**
+ * 削減率を算出してよいかを判定する。
+ *
+ * トークン中央値は成功 run のみから計算しているため、成功率が大きく偏った
+ * 状態で中央値同士を比較すると、母集団の違う数字を割ることになり比較が
+ * 成立しない。両者が最低限の成功数を満たす場合にのみ算出する。
+ *
+ * @returns 算出可能なら null、不可なら理由の文字列
+ */
+export function reductionBlockedReason(
+  smCount: number,
+  smSuccess: number,
+  pwCount: number,
+  pwSuccess: number
+): string | null {
+  const smRequired = minSuccessRequired(smCount);
+  const pwRequired = minSuccessRequired(pwCount);
+
+  if (smCount === 0 || pwCount === 0) {
+    return "run が存在しない MCP があるため算出不能";
+  }
+  if (smSuccess < smRequired || pwSuccess < pwRequired) {
+    return (
+      `成功 run が不足（smallright ${smSuccess}/${smCount}, playwright ${pwSuccess}/${pwCount}）。` +
+      `中央値の母集団が偏るため削減率は算出しない`
+    );
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +213,41 @@ function computeStats(
   };
 }
 
+/**
+ * configs/playwright.mcp.json の args から @playwright/mcp のバージョンを読む。
+ * ハードコードするとレポートと実際に起動したバージョンが食い違うため、
+ * 実際に使われる config を単一の情報源とする。
+ */
+export function parsePlaywrightMcpVersion(configJson: string): string {
+  try {
+    const parsed = JSON.parse(configJson) as {
+      mcpServers?: Record<string, { args?: unknown }>;
+    };
+    const args = parsed.mcpServers?.["playwright"]?.args;
+    if (!Array.isArray(args)) return "unknown";
+
+    for (const arg of args) {
+      if (typeof arg !== "string") continue;
+      const m = /^@playwright\/mcp@(.+)$/.exec(arg);
+      if (m?.[1] !== undefined) return m[1];
+      // バージョン指定なしで参照している場合
+      if (arg === "@playwright/mcp") return "latest";
+    }
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function getPlaywrightMcpVersion(): string {
+  try {
+    const raw = fs.readFileSync(path.join(CONFIGS_DIR, "playwright.mcp.json"), "utf-8");
+    return parsePlaywrightMcpVersion(raw);
+  } catch {
+    return "unknown";
+  }
+}
+
 function getClaudeVersion(): string {
   try {
     // TS6 の execSync(encoding 指定) オーバーロードは shell を string 型のみ受け付けるため
@@ -196,18 +279,31 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
     const smStats = stats.find((s) => s.scenario_id === sid && s.mcp_key === "smallright") ?? null;
     const pwStats = stats.find((s) => s.scenario_id === sid && s.mcp_key === "playwright") ?? null;
 
-    // 削減率は成功 run の中央値ベース。どちらかが null なら算出不能
+    // 削減率は成功 run の中央値ベース。どちらかが null なら算出不能。
+    // さらに成功 run が不足している場合も算出しない（母集団の偏り対策）。
     let token_reduction_pct: number | null = null;
+    let reduction_suppressed_reason: string | null = null;
+
     if (
-      smStats !== null &&
-      pwStats !== null &&
-      smStats.total_tokens.median !== null &&
-      pwStats.total_tokens.median !== null
+      smStats === null ||
+      pwStats === null ||
+      smStats.total_tokens.median === null ||
+      pwStats.total_tokens.median === null
     ) {
-      token_reduction_pct = reductionRate(
-        pwStats.total_tokens.median,
-        smStats.total_tokens.median
+      reduction_suppressed_reason = "成功 run が 0 件の MCP があるため算出不能";
+    } else {
+      reduction_suppressed_reason = reductionBlockedReason(
+        smStats.count,
+        smStats.success_count,
+        pwStats.count,
+        pwStats.success_count
       );
+      if (reduction_suppressed_reason === null) {
+        token_reduction_pct = reductionRate(
+          pwStats.total_tokens.median,
+          smStats.total_tokens.median
+        );
+      }
     }
 
     return {
@@ -216,28 +312,45 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       smallright: smStats,
       playwright: pwStats,
       token_reduction_pct,
+      reduction_suppressed_reason,
     };
   });
 
   // 全体集計: 成功 run のトークンのみ
-  const srTokens = records
-    .filter((r) => r.mcp_key === "smallright" && r.success === true && r.is_error === false)
-    .map((r) => r.total_tokens);
-  const pwTokens = records
-    .filter((r) => r.mcp_key === "playwright" && r.success === true && r.is_error === false)
-    .map((r) => r.total_tokens);
+  const srAll = records.filter((r) => r.mcp_key === "smallright");
+  const pwAll = records.filter((r) => r.mcp_key === "playwright");
+  const srSuccess = srAll.filter((r) => r.success === true && r.is_error === false);
+  const pwSuccess = pwAll.filter((r) => r.success === true && r.is_error === false);
+
+  const srTokens = srSuccess.map((r) => r.total_tokens);
+  const pwTokens = pwSuccess.map((r) => r.total_tokens);
 
   const srMedian = medianOrNull(srTokens);
   const pwMedian = medianOrNull(pwTokens);
-  const overallReduction =
-    srMedian !== null && pwMedian !== null ? reductionRate(pwMedian, srMedian) : null;
+
+  // シナリオ別と同じガードを全体集計にも適用する
+  let overallReduction: number | null = null;
+  let overallSuppressed: string | null = null;
+  if (srMedian === null || pwMedian === null) {
+    overallSuppressed = "成功 run が 0 件の MCP があるため算出不能";
+  } else {
+    overallSuppressed = reductionBlockedReason(
+      srAll.length,
+      srSuccess.length,
+      pwAll.length,
+      pwSuccess.length
+    );
+    if (overallSuppressed === null) {
+      overallReduction = reductionRate(pwMedian, srMedian);
+    }
+  }
 
   return {
     meta: {
       timestamp: new Date().toISOString(),
       model,
       claude_cli_version: getClaudeVersion(),
-      playwright_mcp_version: "0.0.29",
+      playwright_mcp_version: getPlaywrightMcpVersion(),
       os: `${os.platform()} ${os.release()}`,
     },
     records,
@@ -247,6 +360,11 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       smallright_median_total_tokens: srMedian,
       playwright_median_total_tokens: pwMedian,
       overall_token_reduction_pct: overallReduction,
+      smallright_runs: srAll.length,
+      smallright_success_runs: srSuccess.length,
+      playwright_runs: pwAll.length,
+      playwright_success_runs: pwSuccess.length,
+      reduction_suppressed_reason: overallSuppressed,
     },
   };
 }
@@ -293,6 +411,10 @@ function generateMarkdown(result: AggregatedResult): string {
   );
   lines.push("> Token Reduction: positive value = smallright used fewer tokens (good).");
   lines.push("> Completion rate is based on **all runs** (including errors).");
+  lines.push(
+    "> Token Reduction is reported as N/A when either MCP succeeded in fewer than half of its runs,"
+  );
+  lines.push("> because comparing medians drawn from unevenly filtered populations is misleading.");
   lines.push("");
 
   // シナリオ別表
@@ -343,12 +465,33 @@ function generateMarkdown(result: AggregatedResult): string {
   // 総合表
   lines.push("## Overall Summary");
   lines.push("");
-  lines.push("| MCP | Median total tokens (successful runs, all scenarios) |");
-  lines.push("|-----|------------------------------------------------------|");
-  lines.push(`| smallright | ${tok(overall.smallright_median_total_tokens)} |`);
-  lines.push(`| playwright | ${tok(overall.playwright_median_total_tokens)} |`);
-  lines.push(`| **Token reduction** | **${pct(overall.overall_token_reduction_pct)}** |`);
+  lines.push("| MCP | Median total tokens (successful runs, all scenarios) | Successful runs |");
+  lines.push("|-----|------------------------------------------------------|-----------------|");
+  lines.push(
+    `| smallright | ${tok(overall.smallright_median_total_tokens)} | ${overall.smallright_success_runs} / ${overall.smallright_runs} |`
+  );
+  lines.push(
+    `| playwright | ${tok(overall.playwright_median_total_tokens)} | ${overall.playwright_success_runs} / ${overall.playwright_runs} |`
+  );
+  lines.push(`| **Token reduction** | **${pct(overall.overall_token_reduction_pct)}** | |`);
   lines.push("");
+
+  if (overall.reduction_suppressed_reason !== null) {
+    lines.push(`> ⚠ 削減率は算出していません: ${overall.reduction_suppressed_reason}`);
+    lines.push("");
+  }
+
+  const suppressedScenarios = comparisons.filter(
+    (c) => c.reduction_suppressed_reason !== null
+  );
+  if (suppressedScenarios.length > 0) {
+    lines.push("### 削減率を算出しなかったシナリオ");
+    lines.push("");
+    for (const cmp of suppressedScenarios) {
+      lines.push(`- **${cmp.scenario_name}**: ${cmp.reduction_suppressed_reason}`);
+    }
+    lines.push("");
+  }
 
   return lines.join("\n");
 }
@@ -397,7 +540,16 @@ export function printSummary(result: AggregatedResult): void {
 
   console.log("-".repeat(85));
   console.log(
-    `${"OVERALL (median across all)".padEnd(35)} ${tok(overall.smallright_median_total_tokens).padStart(12)} ${tok(overall.playwright_median_total_tokens).padStart(12)} ${pct(overall.overall_token_reduction_pct).padStart(10)}`
+    `${"OVERALL (median across all)".padEnd(35)} ${tok(overall.smallright_median_total_tokens).padStart(12)} ${tok(overall.playwright_median_total_tokens).padStart(12)} ${pct(overall.overall_token_reduction_pct).padStart(10)} ${`${overall.smallright_success_runs}/${overall.smallright_runs}`.padStart(6)} ${`${overall.playwright_success_runs}/${overall.playwright_runs}`.padStart(6)}`
   );
   console.log("=".repeat(85));
+
+  if (overall.reduction_suppressed_reason !== null) {
+    console.log(`WARNING: 削減率は算出していません: ${overall.reduction_suppressed_reason}`);
+  }
+  for (const cmp of comparisons) {
+    if (cmp.reduction_suppressed_reason !== null) {
+      console.log(`  - ${cmp.scenario_name}: ${cmp.reduction_suppressed_reason}`);
+    }
+  }
 }

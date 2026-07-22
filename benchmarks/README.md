@@ -20,6 +20,8 @@ Claude (Sonnet) に**同一のブラウザ操作タスク**を与え、使用す
 | 差分 | 使用する MCP のみ。プロンプト・モデル・シナリオはすべて同一 |
 | ツール制限 | --allowedTools でブラウザ MCP ツールのみ許可 |
 | 成功判定 | レスポンステキストに期待文字列が含まれるか（大文字小文字無視・全包含） |
+| 実行順序 | repeat ごとに MCP を交互実行し、1 回おきに順序を反転（先行/後行の偏りを排除） |
+| タイムアウト | 1 run あたり 5 分。超過時は子プロセスを強制終了し is_error として扱う |
 
 ## $0 で回す手順（サブスクリプション認証）
 
@@ -32,6 +34,13 @@ Claude (Sonnet) に**同一のブラウザ操作タスク**を与え、使用す
 ```bash
 # サブスク認証を確認（Claude CLI がログイン済みであること）
 claude --version
+
+# smallright 本体をビルドする（必須）
+# ベンチマークは <repoRoot>/dist/index.js を MCP サーバーとして起動する。
+# dist/ は .gitignore 対象なので、クローン直後はこのビルドが必要。
+# 省略すると smallright 側の run がすべて ERROR になる。
+npm ci
+npm run build
 
 # 依存インストール
 cd benchmarks
@@ -71,6 +80,15 @@ npm run bench -- --model claude-sonnet-4-5
 
 - **Token Reduction**: `(playwright_median - smallright_median) / playwright_median * 100`。正の値が削減（smallright の方が少ない）。
 - **completion_rate**: エラーなく期待文字列を含むレスポンスを返せた割合。
+
+### 削減率が N/A になる条件
+
+トークン中央値は成功 run のみから計算しています。片方の MCP だけ成功率が低い状態で
+中央値同士を比較すると、母集団の違う数字を割ることになり比較が成立しません。
+
+そのため **どちらかの MCP の成功 run が全 run の半数を下回る場合、削減率は N/A** とし、
+理由をレポートに明記します。数字が出ないときは成功 run 数（Overall Summary に併記）を
+確認してください。
 
 ## 公平性ノート
 

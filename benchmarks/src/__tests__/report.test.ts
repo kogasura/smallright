@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { median, min, max, reductionRate, aggregate } from "../report.js";
+import {
+  median,
+  min,
+  max,
+  reductionRate,
+  aggregate,
+  minSuccessRequired,
+  reductionBlockedReason,
+  parsePlaywrightMcpVersion,
+} from "../report.js";
 import type { RunRecord } from "../runner.js";
 
 describe("median", () => {
@@ -192,5 +201,125 @@ describe("aggregate - 削減率の符号（B-2修正確認）", () => {
     const result = aggregate(records, "sonnet");
     const cmp = result.comparisons.find((c) => c.scenario_id === "s1");
     expect(cmp?.token_reduction_pct).toBeCloseTo(-20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 成功 run 数のガード
+// ---------------------------------------------------------------------------
+
+describe("minSuccessRequired", () => {
+  it("run 数の半数（切り上げ）を返す", () => {
+    expect(minSuccessRequired(3)).toBe(2);
+    expect(minSuccessRequired(4)).toBe(2);
+    expect(minSuccessRequired(5)).toBe(3);
+  });
+
+  it("run 数が 1 以下でも最低 1 を返す", () => {
+    expect(minSuccessRequired(1)).toBe(1);
+    expect(minSuccessRequired(0)).toBe(1);
+  });
+});
+
+describe("reductionBlockedReason", () => {
+  it("双方が過半数成功していれば null（算出可能）", () => {
+    expect(reductionBlockedReason(3, 2, 3, 3)).toBeNull();
+  });
+
+  it("片方の成功 run が過半数を下回る場合は理由を返す", () => {
+    const reason = reductionBlockedReason(3, 3, 3, 1);
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("playwright 1/3");
+  });
+
+  it("run が 0 件の MCP がある場合は理由を返す", () => {
+    expect(reductionBlockedReason(3, 3, 0, 0)).toContain("run が存在しない");
+  });
+});
+
+describe("aggregate - 成功率が偏った場合は削減率を出さない", () => {
+  it("playwright が 3 回中 1 回しか成功していない場合、削減率は null になる", () => {
+    const records: RunRecord[] = [
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      // playwright は 1 回だけ成功。しかもたまたま軽い run
+      makeRecord({ mcp_key: "playwright", total_tokens: 800, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 0, success: false, is_error: true }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 0, success: false, is_error: true }),
+    ];
+
+    const result = aggregate(records, "sonnet");
+    const cmp = result.comparisons.find((c) => c.scenario_id === "s1");
+
+    // 中央値だけ見れば 12.5% の削減に見えるが、母集団が偏っているので出さない
+    expect(cmp?.token_reduction_pct).toBeNull();
+    expect(cmp?.reduction_suppressed_reason).toContain("成功 run が不足");
+
+    // overall も同様に抑制される
+    expect(result.overall.overall_token_reduction_pct).toBeNull();
+    expect(result.overall.reduction_suppressed_reason).not.toBeNull();
+  });
+
+  it("成功 run 数は overall に記録される", () => {
+    const records: RunRecord[] = [
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 0, success: false, is_error: true }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 1000, success: true, is_error: false }),
+    ];
+
+    const result = aggregate(records, "sonnet");
+    expect(result.overall.smallright_runs).toBe(2);
+    expect(result.overall.smallright_success_runs).toBe(1);
+    expect(result.overall.playwright_runs).toBe(1);
+    expect(result.overall.playwright_success_runs).toBe(1);
+  });
+
+  it("双方が過半数成功していれば従来どおり削減率を出す", () => {
+    const records: RunRecord[] = [
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 1000, success: true, is_error: false }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 1000, success: true, is_error: false }),
+    ];
+
+    const result = aggregate(records, "sonnet");
+    const cmp = result.comparisons.find((c) => c.scenario_id === "s1");
+    expect(cmp?.reduction_suppressed_reason).toBeNull();
+    expect(cmp?.token_reduction_pct).toBeCloseTo(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// @playwright/mcp バージョンの取得
+// ---------------------------------------------------------------------------
+
+describe("parsePlaywrightMcpVersion", () => {
+  it("args のバージョン指定を読む", () => {
+    const json = JSON.stringify({
+      mcpServers: {
+        playwright: {
+          command: "npx",
+          args: ["-y", "@playwright/mcp@0.0.29", "--headless"],
+        },
+      },
+    });
+    expect(parsePlaywrightMcpVersion(json)).toBe("0.0.29");
+  });
+
+  it("バージョン指定がない場合は latest を返す", () => {
+    const json = JSON.stringify({
+      mcpServers: { playwright: { args: ["-y", "@playwright/mcp"] } },
+    });
+    expect(parsePlaywrightMcpVersion(json)).toBe("latest");
+  });
+
+  it("該当する引数がなければ unknown を返す", () => {
+    const json = JSON.stringify({ mcpServers: { playwright: { args: ["-y"] } } });
+    expect(parsePlaywrightMcpVersion(json)).toBe("unknown");
+  });
+
+  it("不正な JSON でも例外を投げず unknown を返す", () => {
+    expect(parsePlaywrightMcpVersion("{ broken")).toBe("unknown");
   });
 });

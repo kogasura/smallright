@@ -25,7 +25,15 @@ export interface RunOptions {
   mcpConfigPath: string;
   model: string;
   allowedTools: string;
+  /** 子プロセスを強制終了するまでの上限 (ms)。未指定時は DEFAULT_RUN_TIMEOUT_MS */
+  timeoutMs?: number;
 }
+
+/** 1 run あたりの上限時間 (ms)。これを超えたら子プロセスを kill して is_error にする */
+export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
+
+/** SIGTERM 後、SIGKILL に切り替えるまでの猶予 (ms) */
+const KILL_GRACE_MS = 5_000;
 
 const RUNTMP_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", ".runtmp");
 
@@ -134,6 +142,10 @@ export function parseClaudeOutput(stdout: string, stderr: string, duration_ms: n
  * Windows では claude が claude.cmd として存在する場合があるため
  * shell: true を維持しつつ、プロンプトを args に含めないことで
  * シェルメタ文字（& | < > ^ " ` %）による計測汚染を排除する。
+ *
+ * opts.timeoutMs を超えても終了しない場合は子プロセスを強制終了し、
+ * is_error=true として返す。claude CLI や MCP サーバーがハングしても
+ * ベンチマーク全体が停止しないようにするため。
  */
 export async function runClaude(opts: RunOptions): Promise<RunResult> {
   const startTime = Date.now();
@@ -172,10 +184,17 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
   ];
 
   const claudeCmd = "claude";
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
 
   return new Promise<RunResult>((resolve) => {
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
+
+    // POSIX では shell: true により claude は sh の子プロセスになる。
+    // detached: true でプロセスグループを分離しておくと、タイムアウト時に
+    // kill(-pid) でグループごと落とせる。これをしないと sh だけが死んで
+    // claude 本体とブラウザが孤児として残る。
+    const useProcessGroup = process.platform !== "win32";
 
     // Windows では claude.cmd の解決のため shell: true を維持する。
     // プロンプトは args に含めず stdin で渡すことで、シェルメタ文字による
@@ -185,7 +204,38 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
       env: childEnv,
       shell: true,
       windowsHide: true,
+      detached: useProcessGroup,
     });
+
+    let timedOut = false;
+    let killTimer: NodeJS.Timeout | undefined;
+
+    /** 子プロセス（POSIX ではプロセスグループ全体）にシグナルを送る */
+    const signalChild = (signal: NodeJS.Signals): void => {
+      try {
+        if (useProcessGroup && child.pid !== undefined) {
+          process.kill(-child.pid, signal);
+        } else {
+          child.kill(signal);
+        }
+      } catch {
+        // 既に終了している場合は無視
+      }
+    };
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      signalChild("SIGTERM");
+      // SIGTERM で落ちなければ猶予後に SIGKILL
+      killTimer = setTimeout(() => signalChild("SIGKILL"), KILL_GRACE_MS);
+      killTimer.unref();
+    }, timeoutMs);
+    timeoutTimer.unref();
+
+    const clearTimers = (): void => {
+      clearTimeout(timeoutTimer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+    };
 
     // B-1: claude が即死してパイプが閉じると EPIPE が stdin の error イベントとして
     // 発火する。child.on("error") とは別の EventEmitter なので個別にハンドルする。
@@ -210,18 +260,43 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
       errChunks.push(chunk);
     });
 
-    child.on("close", (code) => {
-      const duration_ms = Date.now() - startTime;
-      const stdout = Buffer.concat(chunks).toString("utf-8");
-      const stderr = Buffer.concat(errChunks).toString("utf-8");
-
-      // 一時 config ファイルを削除（自分で生成したものだけ）
+    /** 一時 config ファイルを削除（自分で生成したものだけ） */
+    const cleanupTmpConfig = (): void => {
       if (resolvedConfig !== opts.mcpConfigPath) {
         try {
           fs.unlinkSync(resolvedConfig);
         } catch {
           // 削除失敗は無視
         }
+      }
+    };
+
+    child.on("close", (code) => {
+      clearTimers();
+      const duration_ms = Date.now() - startTime;
+      const stdout = Buffer.concat(chunks).toString("utf-8");
+      const stderr = Buffer.concat(errChunks).toString("utf-8");
+
+      cleanupTmpConfig();
+
+      // タイムアウトで kill した場合は stdout の内容によらずエラー扱いにする。
+      // 途中まで出力されていても計測値として信頼できないため。
+      if (timedOut) {
+        resolve({
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          num_turns: 0,
+          duration_ms,
+          total_cost_usd: 0,
+          is_error: true,
+          result: "",
+          raw_error: `timeout: exceeded ${timeoutMs}ms, process killed${stderr ? `\nstderr: ${stderr.slice(0, 500)}` : ""}`,
+        });
+        return;
       }
 
       if (code !== 0 && stdout.trim() === "") {
@@ -247,6 +322,8 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
     });
 
     child.on("error", (err) => {
+      clearTimers();
+      cleanupTmpConfig();
       const duration_ms = Date.now() - startTime;
       resolve({
         usage: {
