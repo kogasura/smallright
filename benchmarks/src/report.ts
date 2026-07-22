@@ -51,6 +51,54 @@ export function reductionRate(baseline: number, target: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// トークン指標
+//
+// 4 種類のトークン（input / output / cache_creation / cache_read）を単純合計
+// しても、コストにもコンテキスト量にも対応しない中間的な数字にしかならない。
+// 用途ごとに指標を分ける。
+// ---------------------------------------------------------------------------
+
+/** キャッシュ書き込みの課金係数（base input 比） */
+export const CACHE_WRITE_WEIGHT = 1.25;
+/** キャッシュ読み出しの課金係数（base input 比） */
+export const CACHE_READ_WEIGHT = 0.1;
+
+/**
+ * モデルに渡された入力コンテキストの総量。
+ *
+ * キャッシュ経由で渡された分も「モデルが読んだコンテキスト」なので含める。
+ * smallright の主張（LLM に渡すコンテキストを減らす）に直接対応する主指標。
+ */
+export function contextTokens(r: {
+  input_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}): number {
+  return r.input_tokens + r.cache_creation_input_tokens + r.cache_read_input_tokens;
+}
+
+/**
+ * 課金重みを掛けたトークン数（base input 換算）。
+ *
+ * キャッシュ書き込みは 1.25 倍、読み出しは 0.1 倍で課金されるため、
+ * 生の合計ではコストの比較にならない。output はモデルごとに単価が異なるので
+ * 重み付けせずそのまま加算する（正確なコストは total_cost_usd を参照）。
+ */
+export function billableTokens(r: {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}): number {
+  return (
+    r.input_tokens +
+    r.output_tokens +
+    r.cache_creation_input_tokens * CACHE_WRITE_WEIGHT +
+    r.cache_read_input_tokens * CACHE_READ_WEIGHT
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 集計型
 // ---------------------------------------------------------------------------
 
@@ -68,6 +116,11 @@ export interface ScenarioMcpStats {
    * トークン系の集計は success===true かつ is_error===false の run のみ。
    * 成功 run が 0 件の場合は null。
    */
+  /** 主指標: モデルに渡された入力コンテキスト量 */
+  context_tokens: { median: number | null; min: number | null; max: number | null };
+  /** 課金重み付きトークン数（cache_write 1.25 / cache_read 0.1） */
+  billable_tokens: { median: number | null; min: number | null; max: number | null };
+  /** 4 種のトークンの単純合計（後方互換のため保持。比較には使わない） */
   total_tokens: { median: number | null; min: number | null; max: number | null };
   input_tokens: { median: number | null; min: number | null; max: number | null };
   output_tokens: { median: number | null; min: number | null; max: number | null };
@@ -80,8 +133,15 @@ export interface ScenarioComparison {
   scenario_name: string;
   smallright: ScenarioMcpStats | null;
   playwright: ScenarioMcpStats | null;
-  /** 成功 run のトークン中央値ベースの削減率。算出不能の場合は null */
+  /**
+   * 主指標の削減率。context_tokens の中央値ベース。算出不能の場合は null。
+   * （フィールド名は後方互換のため token_reduction_pct のまま）
+   */
   token_reduction_pct: number | null;
+  /** 課金重み付きトークンの削減率 */
+  billable_reduction_pct: number | null;
+  /** 実コスト (USD) の削減率 */
+  cost_reduction_pct: number | null;
   /** 削減率を算出しなかった理由。算出できた場合は null */
   reduction_suppressed_reason: string | null;
 }
@@ -98,11 +158,24 @@ export interface AggregatedResult {
   stats: ScenarioMcpStats[];
   comparisons: ScenarioComparison[];
   overall: {
-    /** 成功 run のトークン中央値（全シナリオ横断） */
+    /** 主指標: context_tokens の中央値（全シナリオ横断） */
+    smallright_median_context_tokens: number | null;
+    playwright_median_context_tokens: number | null;
+    /** 課金重み付きトークンの中央値 */
+    smallright_median_billable_tokens: number | null;
+    playwright_median_billable_tokens: number | null;
+    /** 単純合計の中央値（後方互換） */
     smallright_median_total_tokens: number | null;
     playwright_median_total_tokens: number | null;
-    /** 成功 run の中央値ベースの削減率。算出不能の場合は null */
+    /** 実コスト (USD) の中央値 */
+    smallright_median_cost_usd: number | null;
+    playwright_median_cost_usd: number | null;
+    /** 主指標 (context_tokens) の削減率。算出不能の場合は null */
     overall_token_reduction_pct: number | null;
+    /** 課金重み付きトークンの削減率 */
+    overall_billable_reduction_pct: number | null;
+    /** 実コストの削減率 */
+    overall_cost_reduction_pct: number | null;
     /** 全シナリオ横断の run 数と成功 run 数 */
     smallright_runs: number;
     smallright_success_runs: number;
@@ -185,6 +258,16 @@ function computeStats(
     // 完走率は全 run ベース
     completion_rate: filtered.length > 0 ? successCount / filtered.length : 0,
     // トークン系は成功 run のみ。0 件の場合は null
+    context_tokens: {
+      median: medianOrNull(successRuns.map(contextTokens)),
+      min: minOrNull(successRuns.map(contextTokens)),
+      max: maxOrNull(successRuns.map(contextTokens)),
+    },
+    billable_tokens: {
+      median: medianOrNull(successRuns.map(billableTokens)),
+      min: minOrNull(successRuns.map(billableTokens)),
+      max: maxOrNull(successRuns.map(billableTokens)),
+    },
     total_tokens: {
       median: medianOrNull(successRuns.map((r) => r.total_tokens)),
       min: minOrNull(successRuns.map((r) => r.total_tokens)),
@@ -282,13 +365,15 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
     // 削減率は成功 run の中央値ベース。どちらかが null なら算出不能。
     // さらに成功 run が不足している場合も算出しない（母集団の偏り対策）。
     let token_reduction_pct: number | null = null;
+    let billable_reduction_pct: number | null = null;
+    let cost_reduction_pct: number | null = null;
     let reduction_suppressed_reason: string | null = null;
 
     if (
       smStats === null ||
       pwStats === null ||
-      smStats.total_tokens.median === null ||
-      pwStats.total_tokens.median === null
+      smStats.context_tokens.median === null ||
+      pwStats.context_tokens.median === null
     ) {
       reduction_suppressed_reason = "成功 run が 0 件の MCP があるため算出不能";
     } else {
@@ -300,9 +385,18 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       );
       if (reduction_suppressed_reason === null) {
         token_reduction_pct = reductionRate(
-          pwStats.total_tokens.median,
-          smStats.total_tokens.median
+          pwStats.context_tokens.median,
+          smStats.context_tokens.median
         );
+        if (smStats.billable_tokens.median !== null && pwStats.billable_tokens.median !== null) {
+          billable_reduction_pct = reductionRate(
+            pwStats.billable_tokens.median,
+            smStats.billable_tokens.median
+          );
+        }
+        if (smStats.cost_usd.median !== null && pwStats.cost_usd.median !== null) {
+          cost_reduction_pct = reductionRate(pwStats.cost_usd.median, smStats.cost_usd.median);
+        }
       }
     }
 
@@ -312,6 +406,8 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       smallright: smStats,
       playwright: pwStats,
       token_reduction_pct,
+      billable_reduction_pct,
+      cost_reduction_pct,
       reduction_suppressed_reason,
     };
   });
@@ -322,14 +418,19 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
   const srSuccess = srAll.filter((r) => r.success === true && r.is_error === false);
   const pwSuccess = pwAll.filter((r) => r.success === true && r.is_error === false);
 
-  const srTokens = srSuccess.map((r) => r.total_tokens);
-  const pwTokens = pwSuccess.map((r) => r.total_tokens);
-
-  const srMedian = medianOrNull(srTokens);
-  const pwMedian = medianOrNull(pwTokens);
+  const srMedian = medianOrNull(srSuccess.map(contextTokens));
+  const pwMedian = medianOrNull(pwSuccess.map(contextTokens));
+  const srBillable = medianOrNull(srSuccess.map(billableTokens));
+  const pwBillable = medianOrNull(pwSuccess.map(billableTokens));
+  const srTotal = medianOrNull(srSuccess.map((r) => r.total_tokens));
+  const pwTotal = medianOrNull(pwSuccess.map((r) => r.total_tokens));
+  const srCost = medianOrNull(srSuccess.map((r) => r.total_cost_usd));
+  const pwCost = medianOrNull(pwSuccess.map((r) => r.total_cost_usd));
 
   // シナリオ別と同じガードを全体集計にも適用する
   let overallReduction: number | null = null;
+  let overallBillableReduction: number | null = null;
+  let overallCostReduction: number | null = null;
   let overallSuppressed: string | null = null;
   if (srMedian === null || pwMedian === null) {
     overallSuppressed = "成功 run が 0 件の MCP があるため算出不能";
@@ -342,6 +443,12 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
     );
     if (overallSuppressed === null) {
       overallReduction = reductionRate(pwMedian, srMedian);
+      if (srBillable !== null && pwBillable !== null) {
+        overallBillableReduction = reductionRate(pwBillable, srBillable);
+      }
+      if (srCost !== null && pwCost !== null) {
+        overallCostReduction = reductionRate(pwCost, srCost);
+      }
     }
   }
 
@@ -357,9 +464,17 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
     stats,
     comparisons,
     overall: {
-      smallright_median_total_tokens: srMedian,
-      playwright_median_total_tokens: pwMedian,
+      smallright_median_context_tokens: srMedian,
+      playwright_median_context_tokens: pwMedian,
+      smallright_median_billable_tokens: srBillable,
+      playwright_median_billable_tokens: pwBillable,
+      smallright_median_total_tokens: srTotal,
+      playwright_median_total_tokens: pwTotal,
+      smallright_median_cost_usd: srCost,
+      playwright_median_cost_usd: pwCost,
       overall_token_reduction_pct: overallReduction,
+      overall_billable_reduction_pct: overallBillableReduction,
+      overall_cost_reduction_pct: overallCostReduction,
       smallright_runs: srAll.length,
       smallright_success_runs: srSuccess.length,
       playwright_runs: pwAll.length,
@@ -394,6 +509,11 @@ function rate(n: number): string {
   return `${(n * 100).toFixed(0)}%`;
 }
 
+function cost(n: number | null): string {
+  if (n === null) return "N/A";
+  return `$${n.toFixed(4)}`;
+}
+
 function generateMarkdown(result: AggregatedResult): string {
   const { meta, comparisons, overall } = result;
 
@@ -409,32 +529,44 @@ function generateMarkdown(result: AggregatedResult): string {
   lines.push(
     "> Token medians are computed from **successful runs only** (success=true, is_error=false)."
   );
-  lines.push("> Token Reduction: positive value = smallright used fewer tokens (good).");
+  lines.push("> Reduction: positive value = smallright used fewer tokens (good).");
   lines.push("> Completion rate is based on **all runs** (including errors).");
   lines.push(
-    "> Token Reduction is reported as N/A when either MCP succeeded in fewer than half of its runs,"
+    "> Reduction is reported as N/A when either MCP succeeded in fewer than half of its runs,"
   );
   lines.push("> because comparing medians drawn from unevenly filtered populations is misleading.");
+  lines.push("");
+  lines.push("### Metrics");
+  lines.push("");
+  lines.push(
+    "- **Context tokens** (primary): `input + cache_creation + cache_read` — how much input context the model actually read."
+  );
+  lines.push(
+    `- **Billable tokens**: \`input + output + cache_creation x ${CACHE_WRITE_WEIGHT} + cache_read x ${CACHE_READ_WEIGHT}\` — weighted by cache pricing.`
+  );
+  lines.push("- **Cost (USD)**: reported by the Claude CLI (`total_cost_usd`).");
+  lines.push(
+    "- **Total tokens**: naive sum of all four counters. Kept for reference only; it matches neither cost nor context."
+  );
   lines.push("");
 
   // シナリオ別表
   lines.push("## Scenario Results");
   lines.push("");
   lines.push(
-    "| Scenario | smallright (median tokens) | playwright (median tokens) | Token Reduction | smallright success | playwright success |"
+    "| Scenario | smallright (median context) | playwright (median context) | Context Reduction | Billable Reduction | Cost Reduction | smallright success | playwright success |"
   );
   lines.push(
-    "|----------|---------------------------|---------------------------|-----------------|--------------------|--------------------|"
+    "|----------|----------------------------|----------------------------|-------------------|--------------------|----------------|--------------------|--------------------|"
   );
 
   for (const cmp of comparisons) {
-    const srTok = cmp.smallright ? tok(cmp.smallright.total_tokens.median) : "N/A";
-    const pwTok = cmp.playwright ? tok(cmp.playwright.total_tokens.median) : "N/A";
-    const reduction = pct(cmp.token_reduction_pct);
+    const srTok = cmp.smallright ? tok(cmp.smallright.context_tokens.median) : "N/A";
+    const pwTok = cmp.playwright ? tok(cmp.playwright.context_tokens.median) : "N/A";
     const srRate = cmp.smallright ? rate(cmp.smallright.completion_rate) : "N/A";
     const pwRate = cmp.playwright ? rate(cmp.playwright.completion_rate) : "N/A";
     lines.push(
-      `| ${cmp.scenario_name} | ${srTok} | ${pwTok} | ${reduction} | ${srRate} | ${pwRate} |`
+      `| ${cmp.scenario_name} | ${srTok} | ${pwTok} | ${pct(cmp.token_reduction_pct)} | ${pct(cmp.billable_reduction_pct)} | ${pct(cmp.cost_reduction_pct)} | ${srRate} | ${pwRate} |`
     );
   }
 
@@ -444,10 +576,10 @@ function generateMarkdown(result: AggregatedResult): string {
   lines.push("## Detailed Stats");
   lines.push("");
   lines.push(
-    "| Scenario | MCP | Runs | Success | Completion | Median total | Min | Max | Median input | Median output | Median turns | Median cost (USD) |"
+    "| Scenario | MCP | Runs | Success | Completion | Median context | Min | Max | Median billable | Median total | Median input | Median output | Median turns | Median cost (USD) |"
   );
   lines.push(
-    "|----------|-----|------|---------|------------|-------------|-----|-----|-------------|--------------|-------------|------------------|"
+    "|----------|-----|------|---------|------------|----------------|-----|-----|-----------------|-------------|-------------|--------------|-------------|------------------|"
   );
 
   for (const cmp of comparisons) {
@@ -455,7 +587,7 @@ function generateMarkdown(result: AggregatedResult): string {
       if (!st) continue;
       const medTurns = st.num_turns.median;
       lines.push(
-        `| ${st.scenario_name} | ${st.mcp_key} | ${st.count} | ${st.success_count} | ${rate(st.completion_rate)} | ${tok(st.total_tokens.median)} | ${tok(st.total_tokens.min)} | ${tok(st.total_tokens.max)} | ${tok(st.input_tokens.median)} | ${tok(st.output_tokens.median)} | ${medTurns !== null ? medTurns.toFixed(1) : "N/A"} | ${st.cost_usd.median !== null ? `$${st.cost_usd.median.toFixed(4)}` : "N/A"} |`
+        `| ${st.scenario_name} | ${st.mcp_key} | ${st.count} | ${st.success_count} | ${rate(st.completion_rate)} | ${tok(st.context_tokens.median)} | ${tok(st.context_tokens.min)} | ${tok(st.context_tokens.max)} | ${tok(st.billable_tokens.median)} | ${tok(st.total_tokens.median)} | ${tok(st.input_tokens.median)} | ${tok(st.output_tokens.median)} | ${medTurns !== null ? medTurns.toFixed(1) : "N/A"} | ${st.cost_usd.median !== null ? `$${st.cost_usd.median.toFixed(4)}` : "N/A"} |`
       );
     }
   }
@@ -465,15 +597,19 @@ function generateMarkdown(result: AggregatedResult): string {
   // 総合表
   lines.push("## Overall Summary");
   lines.push("");
-  lines.push("| MCP | Median total tokens (successful runs, all scenarios) | Successful runs |");
-  lines.push("|-----|------------------------------------------------------|-----------------|");
+  lines.push("Medians across all scenarios, successful runs only.");
+  lines.push("");
+  lines.push("| MCP | Median context | Median billable | Median total | Median cost | Successful runs |");
+  lines.push("|-----|----------------|-----------------|--------------|-------------|-----------------|");
   lines.push(
-    `| smallright | ${tok(overall.smallright_median_total_tokens)} | ${overall.smallright_success_runs} / ${overall.smallright_runs} |`
+    `| smallright | ${tok(overall.smallright_median_context_tokens)} | ${tok(overall.smallright_median_billable_tokens)} | ${tok(overall.smallright_median_total_tokens)} | ${cost(overall.smallright_median_cost_usd)} | ${overall.smallright_success_runs} / ${overall.smallright_runs} |`
   );
   lines.push(
-    `| playwright | ${tok(overall.playwright_median_total_tokens)} | ${overall.playwright_success_runs} / ${overall.playwright_runs} |`
+    `| playwright | ${tok(overall.playwright_median_context_tokens)} | ${tok(overall.playwright_median_billable_tokens)} | ${tok(overall.playwright_median_total_tokens)} | ${cost(overall.playwright_median_cost_usd)} | ${overall.playwright_success_runs} / ${overall.playwright_runs} |`
   );
-  lines.push(`| **Token reduction** | **${pct(overall.overall_token_reduction_pct)}** | |`);
+  lines.push(
+    `| **Reduction** | **${pct(overall.overall_token_reduction_pct)}** | **${pct(overall.overall_billable_reduction_pct)}** | | **${pct(overall.overall_cost_reduction_pct)}** | |`
+  );
   lines.push("");
 
   if (overall.reduction_suppressed_reason !== null) {
@@ -519,30 +655,32 @@ export function writeResults(result: AggregatedResult): void {
 export function printSummary(result: AggregatedResult): void {
   const { comparisons, overall } = result;
 
+  const WIDTH = 100;
+
   console.log("\n========== BENCHMARK SUMMARY ==========");
-  console.log("(Token medians: successful runs only. Completion rate: all runs.)");
+  console.log("(Medians: successful runs only. Completion rate: all runs.)");
+  console.log("(Context = input + cache_creation + cache_read. Billable = cache-weighted.)");
   console.log(
-    `${"Scenario".padEnd(35)} ${"smallright".padStart(12)} ${"playwright".padStart(12)} ${"Reduction".padStart(10)} ${"SR ok".padStart(6)} ${"PW ok".padStart(6)}`
+    `${"Scenario".padEnd(32)} ${"SR context".padStart(12)} ${"PW context".padStart(12)} ${"Context".padStart(9)} ${"Billable".padStart(9)} ${"Cost".padStart(9)} ${"SR ok".padStart(6)} ${"PW ok".padStart(6)}`
   );
-  console.log("-".repeat(85));
+  console.log("-".repeat(WIDTH));
 
   for (const cmp of comparisons) {
-    const srTok = cmp.smallright ? tok(cmp.smallright.total_tokens.median) : "N/A";
-    const pwTok = cmp.playwright ? tok(cmp.playwright.total_tokens.median) : "N/A";
-    const reduction = pct(cmp.token_reduction_pct);
+    const srTok = cmp.smallright ? tok(cmp.smallright.context_tokens.median) : "N/A";
+    const pwTok = cmp.playwright ? tok(cmp.playwright.context_tokens.median) : "N/A";
     const srRate = cmp.smallright ? rate(cmp.smallright.completion_rate) : "N/A";
     const pwRate = cmp.playwright ? rate(cmp.playwright.completion_rate) : "N/A";
 
     console.log(
-      `${cmp.scenario_name.padEnd(35)} ${srTok.padStart(12)} ${pwTok.padStart(12)} ${reduction.padStart(10)} ${srRate.padStart(6)} ${pwRate.padStart(6)}`
+      `${cmp.scenario_name.padEnd(32)} ${srTok.padStart(12)} ${pwTok.padStart(12)} ${pct(cmp.token_reduction_pct).padStart(9)} ${pct(cmp.billable_reduction_pct).padStart(9)} ${pct(cmp.cost_reduction_pct).padStart(9)} ${srRate.padStart(6)} ${pwRate.padStart(6)}`
     );
   }
 
-  console.log("-".repeat(85));
+  console.log("-".repeat(WIDTH));
   console.log(
-    `${"OVERALL (median across all)".padEnd(35)} ${tok(overall.smallright_median_total_tokens).padStart(12)} ${tok(overall.playwright_median_total_tokens).padStart(12)} ${pct(overall.overall_token_reduction_pct).padStart(10)} ${`${overall.smallright_success_runs}/${overall.smallright_runs}`.padStart(6)} ${`${overall.playwright_success_runs}/${overall.playwright_runs}`.padStart(6)}`
+    `${"OVERALL (median across all)".padEnd(32)} ${tok(overall.smallright_median_context_tokens).padStart(12)} ${tok(overall.playwright_median_context_tokens).padStart(12)} ${pct(overall.overall_token_reduction_pct).padStart(9)} ${pct(overall.overall_billable_reduction_pct).padStart(9)} ${pct(overall.overall_cost_reduction_pct).padStart(9)} ${`${overall.smallright_success_runs}/${overall.smallright_runs}`.padStart(6)} ${`${overall.playwright_success_runs}/${overall.playwright_runs}`.padStart(6)}`
   );
-  console.log("=".repeat(85));
+  console.log("=".repeat(WIDTH));
 
   if (overall.reduction_suppressed_reason !== null) {
     console.log(`WARNING: 削減率は算出していません: ${overall.reduction_suppressed_reason}`);

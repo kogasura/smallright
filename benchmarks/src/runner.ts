@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { runClaude, type RunResult } from "./claudeRunner.js";
+import { contextTokens, billableTokens } from "./report.js";
 import { scenarios, judge, type Scenario } from "./scenarios.js";
 import { dirFromMetaUrl } from "./paths.js";
 
@@ -127,7 +128,7 @@ export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
         // ERROR: is_error=true（子プロセス異常終了/usage欠落等）/ OK: 成功 / FAIL: タスク未達成
         const statusIcon = result.is_error ? "ERROR" : success ? "OK" : "FAIL";
         console.log(
-          `  -> ${statusIcon} | tokens=${totalTokens} (in=${result.usage.input_tokens} out=${result.usage.output_tokens}) | turns=${result.num_turns} | cost=$${result.total_cost_usd.toFixed(4)}`
+          `  -> ${statusIcon} | context=${contextTokens(record)} billable=${Math.round(billableTokens(record))} total=${totalTokens} (in=${result.usage.input_tokens} out=${result.usage.output_tokens}) | turns=${result.num_turns} | cost=$${result.total_cost_usd.toFixed(4)}`
         );
 
         // 最後の run 以外は待機
