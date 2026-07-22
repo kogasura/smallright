@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Data Tables (benchmark fixture)</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        margin: 0 auto;
+        max-width: 900px;
+        padding: 20px;
+        color: #333;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 40px;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px 10px;
+        text-align: left;
+        font-size: 14px;
+      }
+      th {
+        background: #f2f2f2;
+        cursor: pointer;
+      }
+      footer {
+        border-top: 1px solid #ddd;
+        padding-top: 12px;
+        font-size: 12px;
+        color: #777;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Data Tables</h3>
+    <p>
+      This page contains two tables of identical data. The benchmark uses the first table only.
+    </p>
+
+    <h4>Example 1</h4>
+    <table id="table1">
+      <thead>
+        <tr>
+          <th>Last Name</th>
+          <th>First Name</th>
+          <th>Email</th>
+          <th>Due</th>
+          <th>Web Site</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Smith</td>
+          <td>John</td>
+          <td>jsmith@gmail.com</td>
+          <td>$50.00</td>
+          <td>http://www.jsmith.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+        <tr>
+          <td>Bach</td>
+          <td>Frank</td>
+          <td>fbach@yahoo.com</td>
+          <td>$51.00</td>
+          <td>http://www.frank.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+        <tr>
+          <td>Doe</td>
+          <td>Jason</td>
+          <td>jdoe@hotmail.com</td>
+          <td>$100.00</td>
+          <td>http://www.jdoe.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+        <tr>
+          <td>Conway</td>
+          <td>Tim</td>
+          <td>tconway@earthlink.net</td>
+          <td>$50.00</td>
+          <td>http://www.timconway.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h4>Example 2</h4>
+    <table id="table2">
+      <thead>
+        <tr>
+          <th><span>Last Name</span></th>
+          <th><span>First Name</span></th>
+          <th><span>Email</span></th>
+          <th><span>Due</span></th>
+          <th><span>Web Site</span></th>
+          <th><span>Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Smith</td>
+          <td>John</td>
+          <td>jsmith@gmail.com</td>
+          <td>$50.00</td>
+          <td>http://www.jsmith.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+        <tr>
+          <td>Bach</td>
+          <td>Frank</td>
+          <td>fbach@yahoo.com</td>
+          <td>$51.00</td>
+          <td>http://www.frank.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+        <tr>
+          <td>Doe</td>
+          <td>Jason</td>
+          <td>jdoe@hotmail.com</td>
+          <td>$100.00</td>
+          <td>http://www.jdoe.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+        <tr>
+          <td>Conway</td>
+          <td>Tim</td>
+          <td>tconway@earthlink.net</td>
+          <td>$50.00</td>
+          <td>http://www.timconway.com</td>
+          <td><a href="#edit">edit</a> <a href="#delete">delete</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <footer>Benchmark fixture. Mirrors the-internet.herokuapp.com/tables structure.</footer>
+  </body>
+</html>

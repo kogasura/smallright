@@ -490,14 +490,20 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
 
 /**
  * 削減率の表示文字列を返す。
- * 削減（正の値）: "30.0%" のように符号なし表記（削減が正契約）
- * 増加（負の値）: "+12.3%" のように + 記号を付けて増加であることを明示
- * N/A: 算出不能
+ *
+ * 旧実装は削減を符号なし、増加を "+" 付きで表示していたため、
+ * "+" が付いている方が悪い結果という直感に反する表記になっていた。
+ * トークンの増減として素直に読めるよう、常に符号を付ける。
+ *
+ * 削減（トークンが減った）: "-30.0%"
+ * 増加（トークンが増えた）: "+12.3%"
  */
-function pct(n: number | null): string {
+export function pct(n: number | null): string {
   if (n === null) return "N/A";
-  if (n >= 0) return `${n.toFixed(1)}%`;
-  return `+${Math.abs(n).toFixed(1)}%`;
+  // reductionRate は「削減量」なので、トークンの増減に直すと符号が反転する
+  const delta = -n;
+  const sign = delta > 0 ? "+" : delta < 0 ? "-" : "±";
+  return `${sign}${Math.abs(delta).toFixed(1)}%`;
 }
 
 function tok(n: number | null): string {
@@ -514,7 +520,7 @@ function cost(n: number | null): string {
   return `$${n.toFixed(4)}`;
 }
 
-function generateMarkdown(result: AggregatedResult): string {
+export function generateMarkdown(result: AggregatedResult): string {
   const { meta, comparisons, overall } = result;
 
   const lines: string[] = [];

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Swag Labs - Your Cart</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="primary_header">
+      <div class="app_logo">Swag Labs</div>
+      <nav>
+        <a id="shopping-cart-link" href="cart.html">Cart</a>
+      </nav>
+    </header>
+
+    <div class="header_secondary_container">
+      <span class="title">Your Cart</span>
+    </div>
+
+    <div class="cart_list">
+      <div class="cart_quantity_label">QTY</div>
+      <div class="cart_desc_label">Description</div>
+      <div id="cart_contents"></div>
+    </div>
+
+    <div class="cart_footer">
+      <a id="continue-shopping" href="inventory.html">Continue Shopping</a>
+      <a id="checkout" href="checkout-step-one.html">Checkout</a>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+      const ids = Shop.cart();
+      const items = Shop.PRODUCTS.filter((p) => ids.includes(p.id));
+
+      document.getElementById("cart_contents").innerHTML =
+        items.length === 0
+          ? '<div class="cart_empty">Your cart is empty.</div>'
+          : items
+              .map(
+                (p) => `
+        <div class="cart_item">
+          <div class="cart_quantity">1</div>
+          <div class="cart_item_label">
+            <div class="inventory_item_name">${p.name}</div>
+            <div class="inventory_item_desc">
+              A carry-all case for the modern professional.
+            </div>
+            <div class="item_pricebar">
+              <div class="inventory_item_price">$${p.price.toFixed(2)}</div>
+              <button class="btn_secondary">Remove</button>
+            </div>
+          </div>
+        </div>`
+              )
+              .join("");
+
+      document.getElementById("continue-shopping").href = Shop.withState("inventory.html");
+      document.getElementById("checkout").href = Shop.withState("checkout-step-one.html");
+      Shop.renderCartBadge();
+    </script>
+  </body>
+</html>

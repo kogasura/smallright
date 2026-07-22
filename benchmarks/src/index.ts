@@ -1,23 +1,27 @@
+import { pathToFileURL } from "node:url";
 import { runBenchmark } from "./runner.js";
 import { aggregate, writeResults, printSummary } from "./report.js";
-import { scenarios } from "./scenarios.js";
+import { scenarios, type TargetKind } from "./scenarios.js";
 import { mcpTargets } from "./runner.js";
 
 // ---------------------------------------------------------------------------
 // 簡易 CLI 引数パース
 // ---------------------------------------------------------------------------
 
-interface CliArgs {
+export interface CliArgs {
   repeat: number;
   model: string;
+  target: TargetKind;
   scenarioIds?: string[];
   mcpKeys?: Array<"smallright" | "playwright">;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     repeat: 3,
     model: "sonnet",
+    // 既定はローカルフィクスチャ。外部サイトの仕様変更に結果が左右されないようにする
+    target: "local",
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -28,10 +32,19 @@ function parseArgs(argv: string[]): CliArgs {
       const n = parseInt(next, 10);
       if (!isNaN(n) && n > 0) {
         args.repeat = n;
+      } else {
+        console.warn(`Invalid --repeat value: ${next}. Using default: ${args.repeat}`);
       }
       i++;
     } else if (arg === "--model" && next !== undefined) {
       args.model = next;
+      i++;
+    } else if (arg === "--target" && next !== undefined) {
+      if (next === "local" || next === "remote") {
+        args.target = next;
+      } else {
+        console.warn(`Unknown target: ${next}. Valid targets: local, remote`);
+      }
       i++;
     } else if (arg === "--scenario" && next !== undefined) {
       // カンマ区切りまたは複数フラグをサポート
@@ -67,6 +80,9 @@ Usage:
 Options:
   --repeat <n>       Number of runs per scenario×MCP (default: 3)
   --model <id>       Claude model ID (default: sonnet)
+  --target <kind>    Target site (default: local)
+                     local  = bundled fixtures (reproducible)
+                     remote = live public sites (saucedemo / the-internet)
   --scenario <id>    Run specific scenario(s), comma-separated
                      Valid: ${scenarios.map((s) => s.id).join(", ")}
   --mcp <key>        Run specific MCP(s), comma-separated
@@ -76,6 +92,7 @@ Options:
 Examples:
   npm run bench
   npm run bench -- --repeat 5
+  npm run bench -- --target remote
   npm run bench -- --scenario login --mcp smallright
   npm run bench -- --model claude-sonnet-4-5
 `);
@@ -93,6 +110,7 @@ async function main(): Promise<void> {
   console.log("=== smallright token benchmark ===");
   console.log(`repeat  : ${cliArgs.repeat}`);
   console.log(`model   : ${cliArgs.model}`);
+  console.log(`target  : ${cliArgs.target}`);
   console.log(`scenario: ${cliArgs.scenarioIds?.join(", ") ?? "all"}`);
   console.log(`mcp     : ${cliArgs.mcpKeys?.join(", ") ?? "all"}`);
   console.log("");
@@ -100,6 +118,7 @@ async function main(): Promise<void> {
   const records = await runBenchmark({
     repeat: cliArgs.repeat,
     model: cliArgs.model,
+    target: cliArgs.target,
     scenarioIds: cliArgs.scenarioIds,
     mcpKeys: cliArgs.mcpKeys,
   });
@@ -114,7 +133,19 @@ async function main(): Promise<void> {
   printSummary(result);
 }
 
-main().catch((err: unknown) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+/**
+ * このファイルは parseArgs をテストから import できるようにエクスポートしている。
+ * import されただけでベンチマークが走らないよう、直接実行された場合のみ main を呼ぶ。
+ */
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isMainModule()) {
+  main().catch((err: unknown) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}

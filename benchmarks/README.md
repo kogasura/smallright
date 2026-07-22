@@ -19,7 +19,8 @@ Claude (Sonnet) に**同一のブラウザ操作タスク**を与え、使用す
 | 測定値 | usage.input_tokens / output_tokens / cache_{creation,read}_input_tokens（指標は下記参照） |
 | 差分 | 使用する MCP のみ。プロンプト・モデル・シナリオはすべて同一 |
 | ツール制限 | --allowedTools でブラウザ MCP ツールのみ許可 |
-| 成功判定 | レスポンステキストに期待文字列が含まれるか（大文字小文字無視・全包含） |
+| 成功判定 | 期待文字列を全て含み、かつ聞いていない情報を含まず、長さ上限内であること |
+| 対象サイト | 既定は同梱フィクスチャ (file://)。`--target remote` で実サイト |
 | 実行順序 | repeat ごとに MCP を交互実行し、1 回おきに順序を反転（先行/後行の偏りを排除） |
 | タイムアウト | 1 run あたり 5 分。超過時は子プロセスを強制終了し is_error として扱う |
 
@@ -51,20 +52,50 @@ npm run bench
 
 # オプション例
 npm run bench -- --repeat 5
+npm run bench -- --target remote
 npm run bench -- --scenario login --mcp smallright
 npm run bench -- --model claude-sonnet-4-5
 ```
 
-## 対象サイト・固定バージョン
+## 対象サイト
+
+外部の公開サイトに依存すると、サイトの仕様変更・障害・ネットワーク遅延で結果が変わり、
+過去の測定値と比較できません。そのため **既定はリポジトリ同梱の固定 HTML** です。
+
+### local（既定）
+
+`benchmarks/fixtures/` 配下の静的 HTML を `file://` で開きます。サーバー不要。
+
+| 対象 | ファイル | 内容 |
+|------|---------|------|
+| shop | `fixtures/shop/index.html` | ログイン → 商品一覧 → カート → チェックアウト情報入力 |
+| tables | `fixtures/tables.html` | 2 つのデータテーブル |
+
+ページ間の状態は URL のクエリ文字列で受け渡しています（`file://` では
+localStorage のオリジン扱いがブラウザ依存のため）。
+
+```bash
+npm run bench                      # local（既定）
+```
+
+### remote
+
+実在の公開サイトを対象にします。実環境に近い挙動を見たいときに使いますが、
+結果の再現性はありません。
 
 | 対象 | URL |
 |------|-----|
 | saucedemo | https://www.saucedemo.com |
 | the-internet tables | https://the-internet.herokuapp.com/tables |
 
-| ソフトウェア | バージョン |
-|-------------|-----------|
-| @playwright/mcp | **0.0.29** |
+```bash
+npm run bench -- --target remote
+```
+
+### 固定バージョン
+
+@playwright/mcp のバージョンは `configs/playwright.mcp.json` の `args` で指定し、
+レポートにはそこから読み取った値を出力します（現在: **0.0.29**）。
 
 ## シナリオ
 
@@ -73,6 +104,22 @@ npm run bench -- --model claude-sonnet-4-5
 | login | ログイン & 商品名取得 | "Sauce Labs Backpack" |
 | table | テーブル読取 | "Smith", "jsmith@gmail.com" |
 | checkout | 複数ステップ: カート→チェックアウト情報入力 | "First Name", "Last Name", "Zip" |
+
+## 成功判定
+
+期待文字列の部分一致だけで判定すると、**ページ全文を出力するだけで通ってしまいます**。
+それでは「より多くのコンテキストを読んで丸ごと吐き出す」戦略が有利になり、
+トークン削減を測るベンチマークとして逆向きのバイアスがかかります。
+
+そのため 3 つの条件をすべて満たした場合のみ成功とします。
+
+| 条件 | 内容 |
+|------|------|
+| `successIncludes` | 期待する文字列をすべて含む（大文字小文字無視） |
+| `successExcludes` | 聞いていない情報を含まない（例: Last Name と Email を聞いたのに Web Site 列が混ざっている） |
+| `maxResultChars` | レスポンスが長さ上限を超えない |
+
+失敗した場合はその理由を記録し、実行ログと `results.json` の `failure_reason` に出力します。
 
 ## トークン指標
 

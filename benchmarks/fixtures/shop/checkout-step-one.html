@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Swag Labs - Checkout: Your Information</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="primary_header">
+      <div class="app_logo">Swag Labs</div>
+      <nav>
+        <a id="shopping-cart-link" href="cart.html">Cart</a>
+      </nav>
+    </header>
+
+    <div class="header_secondary_container">
+      <span class="title">Checkout: Your Information</span>
+    </div>
+
+    <form id="checkout_info_container" class="checkout_info">
+      <label for="first-name">First Name</label>
+      <input type="text" id="first-name" name="firstName" placeholder="First Name" />
+
+      <label for="last-name">Last Name</label>
+      <input type="text" id="last-name" name="lastName" placeholder="Last Name" />
+
+      <label for="postal-code">Zip/Postal Code</label>
+      <input type="text" id="postal-code" name="postalCode" placeholder="Zip/Postal Code" />
+
+      <div class="checkout_buttons">
+        <a id="cancel" href="cart.html">Cancel</a>
+        <input type="submit" id="continue" value="Continue" />
+      </div>
+    </form>
+
+    <script src="app.js"></script>
+    <script>
+      document.getElementById("cancel").href = Shop.withState("cart.html");
+      document.getElementById("checkout_info_container").addEventListener("submit", (e) => {
+        e.preventDefault();
+      });
+      Shop.renderCartBadge();
+    </script>
+  </body>
+</html>
