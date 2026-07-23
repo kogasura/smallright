@@ -4,6 +4,7 @@ import {
   min,
   max,
   reductionRate,
+  aggregateReductionPct,
   aggregate,
   minSuccessRequired,
   reductionBlockedReason,
@@ -721,5 +722,47 @@ describe("aggregate - invalid run", () => {
     ];
     const md = generateMarkdown(aggregate(records, "sonnet"));
     expect(md).not.toContain("計測不成立 (invalid) の run が");
+  });
+});
+
+describe("aggregateReductionPct", () => {
+  it("シナリオ別の比率を幾何平均で集約する", () => {
+    // 2倍と8倍 → 幾何平均は4倍（算術平均の5倍ではない）
+    const r = aggregateReductionPct([
+      { baseline: 200, target: 100 },
+      { baseline: 800, target: 100 },
+    ]);
+    expect(r).not.toBeNull();
+    expect(r!).toBeCloseTo(75, 6); // target/baseline の幾何平均 = 0.25
+  });
+
+  it("プールした中央値と違い、全シナリオが結果に反映される", () => {
+    // 中央のシナリオだけが効くのではないことを確認する
+    const withMiddleOnly = aggregateReductionPct([{ baseline: 100, target: 90 }]);
+    const withAll = aggregateReductionPct([
+      { baseline: 100, target: 90 },
+      { baseline: 100, target: 50 },
+      { baseline: 100, target: 99 },
+    ]);
+    expect(withAll).not.toBeCloseTo(withMiddleOnly!, 3);
+  });
+
+  it("増加している場合は負の値を返す", () => {
+    expect(aggregateReductionPct([{ baseline: 100, target: 200 }])!).toBeCloseTo(-100, 6);
+  });
+
+  it("null や 0 以下の値は除外する", () => {
+    const r = aggregateReductionPct([
+      { baseline: null, target: 100 },
+      { baseline: 100, target: null },
+      { baseline: 0, target: 100 },
+      { baseline: 200, target: 100 },
+    ]);
+    expect(r!).toBeCloseTo(50, 6);
+  });
+
+  it("有効な組が1つも無ければ null", () => {
+    expect(aggregateReductionPct([])).toBeNull();
+    expect(aggregateReductionPct([{ baseline: null, target: null }])).toBeNull();
   });
 });
