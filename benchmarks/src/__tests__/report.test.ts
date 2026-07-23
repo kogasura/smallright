@@ -509,6 +509,15 @@ describe("generateMarkdown", () => {
     expect(md).toContain("-30.0%");
   });
 
+  it("凡例と表示の符号が一致している（負の値が削減）", () => {
+    const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
+    // 削減しているのに凡例が「正の値 = 削減」と書いてあると読者が符号を逆に読む
+    expect(md).not.toContain("positive value = smallright used fewer tokens");
+    expect(md).toContain("negative = smallright used less");
+    expect(md).toContain("Context Δ");
+    expect(md).toContain("-30.0%");
+  });
+
   it("成功 run 数を Overall Summary に併記する", () => {
     const md = generateMarkdown(aggregate(baseRecords, "sonnet"));
     expect(md).toContain("2 / 2");

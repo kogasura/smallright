@@ -211,7 +211,11 @@ output トークンはモデルごとに単価が異なるため、Billable で�
 
 `results/results.md` に表として出力されます。
 
-- **Context / Billable / Cost Reduction**: `(playwright_median - smallright_median) / playwright_median * 100`。正の値が削減（smallright の方が少ない）。
+- **Context / Billable / Cost Δ**: playwright を基準にした smallright の増減率。
+  `(smallright_median - playwright_median) / playwright_median * 100` として表示します。
+  **負の値が削減**（smallright の方が少ない = 良い）、正の値が増加です。
+  なお `results.json` の `*_reduction_pct` フィールドは「削減量」なので**符号が逆**（正の値が削減）です。
+  表示側は「トークンの増減」として読めるよう符号を反転しています。
 - **completion_rate**: エラーなく期待文字列を含むレスポンスを返せた割合。
 
 ### 削減率が N/A になる条件
