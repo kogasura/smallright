@@ -18,6 +18,16 @@ export interface RunResult {
   is_error: boolean;
   result: string;
   raw_error?: string;
+  /**
+   * この run で claude に接続されていた MCP ツール名（system/init イベント由来）。
+   * 空配列なら MCP サーバーが 1 つも繋がっていない。
+   */
+  mcp_tools_available: string[];
+  /**
+   * この run で実際に呼び出された MCP ツール名（assistant の tool_use 由来）。
+   * 重複を含む呼び出し順のリスト。
+   */
+  mcp_tools_used: string[];
 }
 
 export interface RunOptions {
@@ -177,8 +187,13 @@ export function buildClaudeArgs(opts: RunOptions, resolvedConfigPath: string): s
     "--strict-mcp-config",
     "--model",
     shellQuote(opts.model),
+    // stream-json は NDJSON で system/init（接続された MCP サーバーとツール一覧）と
+    // assistant の tool_use（実際に呼ばれたツール）を出す。単一 JSON の
+    // --output-format json ではどちらも取れず、「MCP が繋がらないまま走った run」を
+    // 「タスクに失敗した run」と区別できない。--verbose は stream-json に必須。
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     "--allowedTools",
     // mcp__smallright__* のようなグロブを含む。shell: true のため引用しないと
     // cwd の内容によってはシェルがワイルドカード展開してしまう
@@ -203,7 +218,22 @@ export function buildClaudeArgs(opts: RunOptions, resolvedConfigPath: string): s
  * @param duration_ms - 経過時間（ms）
  */
 export function parseClaudeOutput(stdout: string, stderr: string, duration_ms: number): RunResult {
-  const errorResult = (raw_error: string): RunResult => ({
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (e) {
+    return errorRunResult(
+      duration_ms,
+      `JSON parse error: ${String(e)}\nstdout: ${stdout.slice(0, 500)}`
+    );
+  }
+
+  return resultFromObject(parsed as Record<string, unknown>, stderr, duration_ms);
+}
+
+/** 計測不能だった run を表す RunResult を組み立てる */
+export function errorRunResult(duration_ms: number, raw_error: string): RunResult {
+  return {
     usage: {
       input_tokens: 0,
       output_tokens: 0,
@@ -216,16 +246,21 @@ export function parseClaudeOutput(stdout: string, stderr: string, duration_ms: n
     is_error: true,
     result: "",
     raw_error,
-  });
+    mcp_tools_available: [],
+    mcp_tools_used: [],
+  };
+}
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch (e) {
-    return errorResult(`JSON parse error: ${String(e)}\nstdout: ${stdout.slice(0, 500)}`);
-  }
-
-  const obj = parsed as Record<string, unknown>;
+/**
+ * claude の result オブジェクト（単一 JSON でも stream-json の最終イベントでも同形）を
+ * RunResult に変換する。
+ */
+function resultFromObject(
+  obj: Record<string, unknown>,
+  stderr: string,
+  duration_ms: number
+): RunResult {
+  const errorResult = (raw_error: string): RunResult => errorRunResult(duration_ms, raw_error);
 
   // B-2: usage オブジェクトの存在と input_tokens/output_tokens の有限数チェック。
   // 欠落または NaN の場合は is_error=true として集計から除外する。
@@ -252,12 +287,92 @@ export function parseClaudeOutput(stdout: string, stderr: string, duration_ms: n
     total_cost_usd: Number(obj["total_cost_usd"] ?? 0),
     is_error: Boolean(obj["is_error"] ?? false),
     result: String(obj["result"] ?? ""),
+    mcp_tools_available: [],
+    mcp_tools_used: [],
   };
 
   if (result.is_error) {
     result.raw_error = stderr || String(obj["result"] ?? "");
   }
 
+  return result;
+}
+
+/**
+ * claude CLI の stream-json (NDJSON) 出力をパースする純粋関数。
+ *
+ * 単一 JSON と違い、以下の 2 つが run 単位で取れる:
+ *
+ * - `system/init` の `tools` … その run で claude に接続されていたツール一覧。
+ *   MCP サーバーの起動に失敗すると、ここから mcp__* が丸ごと消える。
+ * - `assistant` の `tool_use` … 実際に呼び出されたツール。
+ *
+ * この 2 つが無いと、「MCP が繋がらず 1 ターンで諦めた run」を
+ * 「タスクを達成できなかった run」と同じ失敗として数えてしまう。前者は計測が
+ * 成立していないので、対象ツールの実力として集計してはいけない。
+ */
+export function parseClaudeStream(stdout: string, stderr: string, duration_ms: number): RunResult {
+  const toolsAvailable: string[] = [];
+  const toolsUsed: string[] = [];
+  let resultObj: Record<string, unknown> | null = null;
+
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      // NDJSON に混ざった非 JSON 行（警告など）は無視する
+      continue;
+    }
+
+    const type = event["type"];
+
+    if (type === "system" && event["subtype"] === "init") {
+      const tools = event["tools"];
+      if (Array.isArray(tools)) {
+        for (const t of tools) {
+          if (typeof t === "string") toolsAvailable.push(t);
+        }
+      }
+      continue;
+    }
+
+    if (type === "assistant") {
+      const message = event["message"];
+      const content =
+        message !== null && typeof message === "object"
+          ? (message as Record<string, unknown>)["content"]
+          : undefined;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block === null || typeof block !== "object") continue;
+          const b = block as Record<string, unknown>;
+          if (b["type"] === "tool_use" && typeof b["name"] === "string") {
+            toolsUsed.push(b["name"]);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (type === "result") {
+      resultObj = event;
+    }
+  }
+
+  if (resultObj === null) {
+    return errorRunResult(
+      duration_ms,
+      `stream-json に result イベントがありません\nstdout: ${stdout.slice(0, 500)}`
+    );
+  }
+
+  const result = resultFromObject(resultObj, stderr, duration_ms);
+  result.mcp_tools_available = toolsAvailable;
+  result.mcp_tools_used = toolsUsed;
   return result;
 }
 
@@ -393,63 +508,29 @@ export async function runClaude(opts: RunOptions): Promise<RunResult> {
       // タイムアウトで kill した場合は stdout の内容によらずエラー扱いにする。
       // 途中まで出力されていても計測値として信頼できないため。
       if (timedOut) {
-        resolve({
-          usage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          },
-          num_turns: 0,
-          duration_ms,
-          total_cost_usd: 0,
-          is_error: true,
-          result: "",
-          raw_error: `timeout: exceeded ${timeoutMs}ms, process killed${stderr ? `\nstderr: ${stderr.slice(0, 500)}` : ""}`,
-        });
+        resolve(
+          errorRunResult(
+            duration_ms,
+            `timeout: exceeded ${timeoutMs}ms, process killed${stderr ? `\nstderr: ${stderr.slice(0, 500)}` : ""}`
+          )
+        );
         return;
       }
 
       if (code !== 0 && stdout.trim() === "") {
-        resolve({
-          usage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          },
-          num_turns: 0,
-          duration_ms,
-          total_cost_usd: 0,
-          is_error: true,
-          result: "",
-          raw_error: stderr || `process exited with code ${code}`,
-        });
+        resolve(errorRunResult(duration_ms, stderr || `process exited with code ${code}`));
         return;
       }
 
-      // JSON パース・usage バリデーションは純粋関数に委ねる
-      resolve(parseClaudeOutput(stdout, stderr, duration_ms));
+      // NDJSON パース・usage バリデーションは純粋関数に委ねる
+      resolve(parseClaudeStream(stdout, stderr, duration_ms));
     });
 
     child.on("error", (err) => {
       clearTimers();
       cleanupTmpConfig();
       const duration_ms = Date.now() - startTime;
-      resolve({
-        usage: {
-          input_tokens: 0,
-          output_tokens: 0,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
-        },
-        num_turns: 0,
-        duration_ms,
-        total_cost_usd: 0,
-        is_error: true,
-        result: "",
-        raw_error: `spawn error: ${err.message}`,
-      });
+      resolve(errorRunResult(duration_ms, `spawn error: ${err.message}`));
     });
   });
 }

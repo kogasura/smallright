@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseClaudeOutput, injectPlaywrightExecutablePath } from "../claudeRunner.js";
+import {
+  parseClaudeOutput,
+  parseClaudeStream,
+  buildClaudeArgs,
+  injectPlaywrightExecutablePath,
+} from "../claudeRunner.js";
 
 describe("injectPlaywrightExecutablePath", () => {
   const base = JSON.stringify({
@@ -169,5 +174,127 @@ describe("parseClaudeOutput - B-2: usage 欠落・非有限数 → is_error=true
     const total =
       r.usage.input_tokens + r.usage.output_tokens;
     expect(total).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stream-json パース
+//
+// 単一 JSON では取れなかった「その run で MCP が繋がっていたか」「実際にツールを
+// 呼んだか」を、system/init と assistant の tool_use から拾えることを確認する。
+// ---------------------------------------------------------------------------
+
+function streamLines(lines: unknown[]): string {
+  return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+}
+
+const INIT_EVENT = (tools: string[]) => ({
+  type: "system",
+  subtype: "init",
+  tools,
+  mcp_servers: [],
+});
+
+const ASSISTANT_TOOL_USE = (name: string) => ({
+  type: "assistant",
+  message: {
+    role: "assistant",
+    content: [
+      { type: "text", text: "調べます" },
+      { type: "tool_use", id: "toolu_1", name, input: {} },
+    ],
+  },
+});
+
+const RESULT_EVENT = {
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  num_turns: 5,
+  total_cost_usd: 0.026,
+  result: "Sauce Labs Backpack",
+  usage: {
+    input_tokens: 10,
+    output_tokens: 306,
+    cache_creation_input_tokens: 647,
+    cache_read_input_tokens: 56449,
+  },
+};
+
+describe("parseClaudeStream", () => {
+  it("init のツール一覧と tool_use の呼び出しを抽出する", () => {
+    const stdout = streamLines([
+      INIT_EVENT(["mcp__smallright__navigate", "mcp__smallright__read_text"]),
+      ASSISTANT_TOOL_USE("mcp__smallright__navigate"),
+      ASSISTANT_TOOL_USE("mcp__smallright__read_text"),
+      RESULT_EVENT,
+    ]);
+    const r = parseClaudeStream(stdout, "", DURATION);
+
+    expect(r.is_error).toBe(false);
+    expect(r.result).toBe("Sauce Labs Backpack");
+    expect(r.usage.input_tokens).toBe(10);
+    expect(r.mcp_tools_available).toEqual([
+      "mcp__smallright__navigate",
+      "mcp__smallright__read_text",
+    ]);
+    expect(r.mcp_tools_used).toEqual([
+      "mcp__smallright__navigate",
+      "mcp__smallright__read_text",
+    ]);
+  });
+
+  it("MCP が繋がらなかった run では available/used が空になる", () => {
+    const stdout = streamLines([
+      INIT_EVENT([]),
+      { ...RESULT_EVENT, num_turns: 1, result: "使えるブラウザツールがありません" },
+    ]);
+    const r = parseClaudeStream(stdout, "", DURATION);
+
+    expect(r.is_error).toBe(false);
+    expect(r.mcp_tools_available).toEqual([]);
+    expect(r.mcp_tools_used).toEqual([]);
+  });
+
+  it("JSON でない行は無視する", () => {
+    const stdout =
+      "warning: something\n" + streamLines([INIT_EVENT(["mcp__x__y"]), RESULT_EVENT]);
+    const r = parseClaudeStream(stdout, "", DURATION);
+    expect(r.is_error).toBe(false);
+    expect(r.mcp_tools_available).toEqual(["mcp__x__y"]);
+  });
+
+  it("result イベントが無ければエラーにする", () => {
+    const stdout = streamLines([INIT_EVENT(["mcp__x__y"])]);
+    const r = parseClaudeStream(stdout, "", DURATION);
+    expect(r.is_error).toBe(true);
+    expect(r.raw_error).toContain("result イベントがありません");
+  });
+
+  it("usage 欠落は単一 JSON と同じくエラーにする", () => {
+    const noUsage = { ...RESULT_EVENT } as Record<string, unknown>;
+    delete noUsage["usage"];
+    const stdout = streamLines([INIT_EVENT([]), noUsage]);
+    const r = parseClaudeStream(stdout, "", DURATION);
+    expect(r.is_error).toBe(true);
+    expect(r.raw_error).toContain("usage");
+  });
+});
+
+describe("buildClaudeArgs - stream-json", () => {
+  it("stream-json と --verbose を渡す", () => {
+    const args = buildClaudeArgs(
+      {
+        prompt: "x",
+        mcpConfigPath: "/tmp/x.json",
+        model: "sonnet",
+        allowedTools: "mcp__smallright__*",
+      },
+      "/tmp/x.json"
+    );
+    expect(args).toContain("stream-json");
+    expect(args).toContain("--verbose");
+    // 単一 JSON に戻ると run 単位のツール検出ができなくなる
+    expect(args).not.toContain("json");
   });
 });
