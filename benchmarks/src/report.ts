@@ -556,11 +556,11 @@ export function generateMarkdown(result: AggregatedResult): string {
   lines.push(
     "> Token medians are computed from **successful runs only** (success=true, is_error=false)."
   );
-  lines.push("> Reduction: positive value = smallright used fewer tokens (good).");
-  lines.push("> Completion rate is based on **all runs** (including errors).");
   lines.push(
-    "> Reduction is reported as N/A when either MCP succeeded in fewer than half of its runs,"
+    "> Δ columns show smallright relative to playwright as a **token/cost delta**: negative = smallright used less (good), positive = smallright used more."
   );
+  lines.push("> Completion rate is based on **all runs** (including errors).");
+  lines.push("> Δ is reported as N/A when either MCP succeeded in fewer than half of its runs,");
   lines.push("> because comparing medians drawn from unevenly filtered populations is misleading.");
   lines.push("");
   lines.push("### Metrics");
@@ -581,7 +581,7 @@ export function generateMarkdown(result: AggregatedResult): string {
   lines.push("## Scenario Results");
   lines.push("");
   lines.push(
-    "| Scenario | smallright (median context) | playwright (median context) | Context Reduction | Billable Reduction | Cost Reduction | smallright success | playwright success |"
+    "| Scenario | smallright (median context) | playwright (median context) | Context Δ | Billable Δ | Cost Δ | smallright success | playwright success |"
   );
   lines.push(
     "|----------|----------------------------|----------------------------|-------------------|--------------------|----------------|--------------------|--------------------|"
@@ -635,7 +635,7 @@ export function generateMarkdown(result: AggregatedResult): string {
     `| playwright | ${tok(overall.playwright_median_context_tokens)} | ${tok(overall.playwright_median_billable_tokens)} | ${tok(overall.playwright_median_total_tokens)} | ${cost(overall.playwright_median_cost_usd)} | ${overall.playwright_success_runs} / ${overall.playwright_runs} |`
   );
   lines.push(
-    `| **Reduction** | **${pct(overall.overall_token_reduction_pct)}** | **${pct(overall.overall_billable_reduction_pct)}** | | **${pct(overall.overall_cost_reduction_pct)}** | |`
+    `| **Δ (smallright vs playwright)** | **${pct(overall.overall_token_reduction_pct)}** | **${pct(overall.overall_billable_reduction_pct)}** | | **${pct(overall.overall_cost_reduction_pct)}** | |`
   );
   lines.push("");
 
