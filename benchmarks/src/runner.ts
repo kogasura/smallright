@@ -3,6 +3,12 @@ import { runClaude, type RunResult } from "./claudeRunner.js";
 import { contextTokens, billableTokens } from "./report.js";
 import { preflightMcp, formatPreflightFailure, type PreflightResult } from "./preflight.js";
 import {
+  classifyRun,
+  filterMcpTools,
+  type RunStatus,
+  type InvalidReason,
+} from "./runStatus.js";
+import {
   scenarios,
   judgeScenario,
   targetUrls,
@@ -47,10 +53,27 @@ export interface RunRecord {
   duration_ms: number;
   total_cost_usd: number;
   is_error: boolean;
+  /** status === "success" と同義。既存の results.json との互換のため残している */
   success: boolean;
-  /** 失敗した場合の判定理由。成功時は undefined */
+  /**
+   * run の分類。invalid は「対象 MCP を一度も通っていない」= 計測不成立で、
+   * 集計から除外される。詳細は runStatus.ts を参照。
+   *
+   * この項目が導入される前に取得した results.json を読み直せるよう optional に
+   * している。未設定のレコードは report 側で is_error / success から復元する。
+   */
+  status?: RunStatus;
+  /** status === "invalid" のときの理由 */
+  invalid_reason?: InvalidReason;
+  /** 失敗・無効の判定理由。成功時は undefined */
   failure_reason?: string;
   raw_error?: string;
+  /** この run で接続されていた対象 MCP のツール数（旧レコードでは未設定） */
+  mcp_tools_available?: number;
+  /** この run で実際に呼ばれた対象 MCP のツール呼び出し回数（旧レコードでは未設定） */
+  mcp_tool_calls?: number;
+  /** この run に要した試行回数（無効時のリトライを含む）。通常は 1 */
+  attempts?: number;
 }
 
 export interface RunnerOptions {
@@ -71,6 +94,16 @@ function sleep(ms: number): Promise<void> {
 
 /** レート制限対策の run 間待機 (ミリ秒) */
 const INTER_RUN_WAIT_MS = 5_000;
+
+/**
+ * 計測不成立 (invalid) だった run の最大試行回数。
+ *
+ * stdio の MCP サーバーは連続実行の後半で起動に失敗することがある（実測では
+ * run_index 3, 4 に失敗が集中した）。一過性なので、計測不成立と判定したら
+ * 同じ条件で数回まで引き直す。それでも繋がらなければ invalid として記録し、
+ * 集計から除外したうえでレポートに件数を明記する（黙って捨てない）。
+ */
+export const INVALID_RUN_ATTEMPTS = 3;
 
 export async function runBenchmark(opts: RunnerOptions): Promise<RunRecord[]> {
   const target = opts.target ?? "local";
@@ -157,12 +190,35 @@ async function runScenarios(
           `[${runCount}/${totalRuns}] scenario=${scenario.id} mcp=${mcp.key} run=${i + 1}/${opts.repeat}`
         );
 
-        const result: RunResult = await runClaude({
-          prompt: scenario.buildPrompt(urls),
-          mcpConfigPath: mcp.configPath,
-          model: opts.model,
-          allowedTools: mcp.toolGlob,
-        });
+        // 計測不成立 (invalid) の場合だけ引き直す。失敗・エラーは実力・環境の
+        // 結果なのでリトライしない（リトライすると成功率が水増しされる）。
+        let result!: RunResult;
+        let classified!: ReturnType<typeof classifyRun>;
+        let attempts = 0;
+
+        for (let attempt = 1; attempt <= INVALID_RUN_ATTEMPTS; attempt++) {
+          attempts = attempt;
+          result = await runClaude({
+            prompt: scenario.buildPrompt(urls),
+            mcpConfigPath: mcp.configPath,
+            model: opts.model,
+            allowedTools: mcp.toolGlob,
+          });
+
+          classified = classifyRun({
+            mcpKey: mcp.key,
+            is_error: result.is_error,
+            toolsAvailable: result.mcp_tools_available,
+            toolsUsed: result.mcp_tools_used,
+            judged: judgeScenario(result.result, scenario),
+            ...(result.raw_error !== undefined ? { rawError: result.raw_error } : {}),
+          });
+
+          if (classified.status !== "invalid") break;
+
+          console.log(`     INVALID (${attempt}/${INVALID_RUN_ATTEMPTS}): ${classified.detail}`);
+          if (attempt < INVALID_RUN_ATTEMPTS) await sleep(INTER_RUN_WAIT_MS);
+        }
 
         const totalTokens =
           result.usage.input_tokens +
@@ -170,10 +226,7 @@ async function runScenarios(
           result.usage.cache_creation_input_tokens +
           result.usage.cache_read_input_tokens;
 
-        const judged = result.is_error
-          ? { success: false, reason: "run がエラー終了" }
-          : judgeScenario(result.result, scenario);
-        const success = judged.success;
+        const success = classified.status === "success";
 
         const record: RunRecord = {
           scenario_id: scenario.id,
@@ -190,24 +243,37 @@ async function runScenarios(
           total_cost_usd: result.total_cost_usd,
           is_error: result.is_error,
           success,
+          status: classified.status,
+          mcp_tools_available: filterMcpTools(result.mcp_tools_available, mcp.key).length,
+          mcp_tool_calls: filterMcpTools(result.mcp_tools_used, mcp.key).length,
+          attempts,
         };
 
         if (result.raw_error !== undefined) {
           record.raw_error = result.raw_error;
         }
-        if (!success && judged.reason !== null) {
-          record.failure_reason = judged.reason;
+        if (classified.invalid_reason !== undefined) {
+          record.invalid_reason = classified.invalid_reason;
+        }
+        if (!success && classified.detail !== null) {
+          record.failure_reason = classified.detail;
         }
 
         records.push(record);
 
-        // ERROR: is_error=true（子プロセス異常終了/usage欠落等）/ OK: 成功 / FAIL: タスク未達成
-        const statusIcon = result.is_error ? "ERROR" : success ? "OK" : "FAIL";
+        // OK: 成功 / FAIL: 対象ツールを使ったがタスク未達成 /
+        // ERROR: 子プロセス異常終了・usage 欠落 / INVALID: 対象ツールを通っていない（計測不成立）
+        const statusIcon = {
+          success: "OK",
+          failure: "FAIL",
+          error: "ERROR",
+          invalid: "INVALID",
+        }[classified.status];
         console.log(
-          `  -> ${statusIcon} | context=${contextTokens(record)} billable=${Math.round(billableTokens(record))} total=${totalTokens} (in=${result.usage.input_tokens} out=${result.usage.output_tokens}) | turns=${result.num_turns} | cost=$${result.total_cost_usd.toFixed(4)}`
+          `  -> ${statusIcon} | context=${contextTokens(record)} billable=${Math.round(billableTokens(record))} total=${totalTokens} (in=${result.usage.input_tokens} out=${result.usage.output_tokens}) | turns=${result.num_turns} | tools=${record.mcp_tool_calls} | cost=$${result.total_cost_usd.toFixed(4)}`
         );
-        if (statusIcon === "FAIL" && judged.reason !== null) {
-          console.log(`     reason: ${judged.reason}`);
+        if (classified.detail !== null && classified.status !== "success") {
+          console.log(`     reason: ${classified.detail}`);
         }
 
         // 最後の run 以外は待機

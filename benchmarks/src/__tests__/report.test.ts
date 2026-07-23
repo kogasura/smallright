@@ -554,3 +554,172 @@ describe("generateMarkdown", () => {
     expect(md).toContain("**OS**:");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 計測不成立 (invalid) の扱い
+//
+// MCP が繋がらないまま終わった run を「失敗」として数えると、対象ツールの
+// 完走率が実力と無関係に下がる。invalid は分子からも分母からも外す。
+// ---------------------------------------------------------------------------
+
+describe("aggregate - invalid run", () => {
+  const withInvalid = (): RunRecord[] => [
+    makeRecord({
+      mcp_key: "smallright",
+      total_tokens: 700,
+      success: true,
+      is_error: false,
+      status: "success",
+    }),
+    makeRecord({
+      mcp_key: "smallright",
+      total_tokens: 700,
+      success: true,
+      is_error: false,
+      status: "success",
+    }),
+    // MCP が繋がらず 1 ターンで終わった run
+    makeRecord({
+      mcp_key: "smallright",
+      total_tokens: 5000,
+      success: false,
+      is_error: false,
+      status: "invalid",
+      invalid_reason: "mcp_not_connected",
+      run_index: 2,
+    }),
+    makeRecord({
+      mcp_key: "playwright",
+      total_tokens: 1000,
+      success: true,
+      is_error: false,
+      status: "success",
+    }),
+    makeRecord({
+      mcp_key: "playwright",
+      total_tokens: 1000,
+      success: true,
+      is_error: false,
+      status: "success",
+    }),
+    makeRecord({
+      mcp_key: "playwright",
+      total_tokens: 1000,
+      success: true,
+      is_error: false,
+      status: "success",
+    }),
+  ];
+
+  it("完走率の分母から invalid を外す（3 回中 2 成功 1 無効 → 100%）", () => {
+    const result = aggregate(withInvalid(), "sonnet");
+    const sr = result.stats.find((s) => s.mcp_key === "smallright")!;
+
+    expect(sr.count).toBe(3);
+    expect(sr.invalid_count).toBe(1);
+    expect(sr.valid_count).toBe(2);
+    expect(sr.success_count).toBe(2);
+    // invalid を失敗として数えると 67% になってしまう
+    expect(sr.completion_rate).toBe(1);
+  });
+
+  it("invalid run のトークンは中央値に混ざらない", () => {
+    const result = aggregate(withInvalid(), "sonnet");
+    const sr = result.stats.find((s) => s.mcp_key === "smallright")!;
+    expect(sr.context_tokens.median).toBe(700);
+  });
+
+  it("overall に invalid 件数が記録される", () => {
+    const result = aggregate(withInvalid(), "sonnet");
+    expect(result.overall.smallright_invalid_runs).toBe(1);
+    expect(result.overall.smallright_valid_runs).toBe(2);
+    expect(result.overall.playwright_invalid_runs).toBe(0);
+    // 母集団は揃っているので削減率は算出される
+    expect(result.overall.reduction_suppressed_reason).toBeNull();
+  });
+
+  it("invalid が多くて有効 run が足りなければ削減率を出さない", () => {
+    const records: RunRecord[] = [
+      makeRecord({
+        mcp_key: "smallright",
+        total_tokens: 700,
+        success: true,
+        is_error: false,
+        status: "success",
+      }),
+      makeRecord({
+        mcp_key: "smallright",
+        total_tokens: 0,
+        success: false,
+        is_error: false,
+        status: "failure",
+        run_index: 1,
+      }),
+      makeRecord({
+        mcp_key: "smallright",
+        total_tokens: 0,
+        success: false,
+        is_error: false,
+        status: "failure",
+        run_index: 2,
+      }),
+      makeRecord({
+        mcp_key: "playwright",
+        total_tokens: 1000,
+        success: true,
+        is_error: false,
+        status: "success",
+      }),
+    ];
+    const result = aggregate(records, "sonnet");
+    expect(result.overall.overall_token_reduction_pct).toBeNull();
+    expect(result.overall.reduction_suppressed_reason).toContain("成功 run が不足");
+  });
+
+  it("status を持たない旧レコードは valid として扱う（後方互換）", () => {
+    const records: RunRecord[] = [
+      makeRecord({ mcp_key: "smallright", total_tokens: 700, success: true, is_error: false }),
+      makeRecord({
+        mcp_key: "smallright",
+        total_tokens: 0,
+        success: false,
+        is_error: false,
+        run_index: 1,
+      }),
+      makeRecord({ mcp_key: "playwright", total_tokens: 1000, success: true, is_error: false }),
+    ];
+    const result = aggregate(records, "sonnet");
+    const sr = result.stats.find((s) => s.mcp_key === "smallright")!;
+    expect(sr.invalid_count).toBe(0);
+    expect(sr.valid_count).toBe(2);
+    expect(sr.completion_rate).toBe(0.5);
+  });
+
+  it("レポートに invalid の件数と内訳を出す（黙って除外しない）", () => {
+    const md = generateMarkdown(aggregate(withInvalid(), "sonnet"));
+    expect(md).toContain("計測不成立 (invalid) の run が 1 件");
+    expect(md).toContain("mcp_not_connected");
+    expect(md).toContain("| Invalid |");
+  });
+
+  it("invalid が 0 件なら警告を出さない", () => {
+    const records: RunRecord[] = [
+      makeRecord({
+        mcp_key: "smallright",
+        total_tokens: 700,
+        success: true,
+        is_error: false,
+        status: "success",
+      }),
+      makeRecord({
+        mcp_key: "playwright",
+        total_tokens: 1000,
+        success: true,
+        is_error: false,
+        status: "success",
+      }),
+    ];
+    const md = generateMarkdown(aggregate(records, "sonnet"));
+    expect(md).not.toContain("計測不成立 (invalid) の run が");
+  });
+});

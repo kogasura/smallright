@@ -3,10 +3,28 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 import * as os from "node:os";
 import type { RunRecord } from "./runner.js";
+import type { RunStatus } from "./runStatus.js";
 import { dirFromMetaUrl } from "./paths.js";
 
 const RESULTS_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "results");
 const CONFIGS_DIR = path.resolve(dirFromMetaUrl(import.meta.url), "..", "configs");
+
+/**
+ * レコードの分類を返す。
+ *
+ * status が導入される前に取得した results.json には status が無いので、
+ * is_error / success から復元する（旧レコードに invalid は存在しない）。
+ */
+export function recordStatus(r: RunRecord): RunStatus {
+  if (r.status !== undefined) return r.status;
+  if (r.is_error) return "error";
+  return r.success ? "success" : "failure";
+}
+
+/** 計測が成立した run（invalid 以外）かどうか */
+export function isValidRun(r: RunRecord): boolean {
+  return recordStatus(r) !== "invalid";
+}
 
 /**
  * 削減率を算出するために必要な成功 run の最低数。
@@ -106,11 +124,19 @@ export interface ScenarioMcpStats {
   scenario_id: string;
   scenario_name: string;
   mcp_key: "smallright" | "playwright";
-  /** 全 run 数（エラー含む） */
+  /** 実行した run 数（エラー・計測不成立を含む） */
   count: number;
+  /**
+   * 計測が成立しなかった run 数。対象 MCP のツールが接続されていない、または
+   * 一度も呼ばれないまま終わった run。対象ツールの実力とは無関係なので、
+   * 完走率の分母からも外す。
+   */
+  invalid_count: number;
+  /** 計測が成立した run 数 = count - invalid_count */
+  valid_count: number;
   /** 成功（success===true かつ is_error===false）の run 数 */
   success_count: number;
-  /** 完走率 = success_count / count（全 run ベース） */
+  /** 完走率 = success_count / valid_count（計測が成立した run ベース） */
   completion_rate: number;
   /**
    * トークン系の集計は success===true かつ is_error===false の run のみ。
@@ -181,6 +207,12 @@ export interface AggregatedResult {
     smallright_success_runs: number;
     playwright_runs: number;
     playwright_success_runs: number;
+    /** 計測が成立した run 数（完走率・削減率ガードの母数） */
+    smallright_valid_runs: number;
+    playwright_valid_runs: number;
+    /** 計測不成立で集計から除外した run 数 */
+    smallright_invalid_runs: number;
+    playwright_invalid_runs: number;
     /** 削減率を算出しなかった理由。算出できた場合は null */
     reduction_suppressed_reason: string | null;
   };
@@ -245,8 +277,10 @@ function computeStats(
   const filtered = records.filter(
     (r) => r.scenario_id === scenario_id && r.mcp_key === mcp_key
   );
+  // 計測が成立した run のみ（完走率の母数）
+  const validRuns = filtered.filter(isValidRun);
   // 成功 run のみ（トークン系集計に使用）
-  const successRuns = filtered.filter((r) => r.success === true && r.is_error === false);
+  const successRuns = validRuns.filter((r) => r.success === true && r.is_error === false);
   const successCount = successRuns.length;
 
   return {
@@ -254,9 +288,12 @@ function computeStats(
     scenario_name,
     mcp_key,
     count: filtered.length,
+    invalid_count: filtered.length - validRuns.length,
+    valid_count: validRuns.length,
     success_count: successCount,
-    // 完走率は全 run ベース
-    completion_rate: filtered.length > 0 ? successCount / filtered.length : 0,
+    // 完走率は計測が成立した run ベース。計測不成立の run を分母に含めると、
+    // MCP の起動失敗が対象ツールの信頼性の低さとして数字に出てしまう
+    completion_rate: validRuns.length > 0 ? successCount / validRuns.length : 0,
     // トークン系は成功 run のみ。0 件の場合は null
     context_tokens: {
       median: medianOrNull(successRuns.map(contextTokens)),
@@ -399,9 +436,9 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       reduction_suppressed_reason = "成功 run が 0 件の MCP があるため算出不能";
     } else {
       reduction_suppressed_reason = reductionBlockedReason(
-        smStats.count,
+        smStats.valid_count,
         smStats.success_count,
-        pwStats.count,
+        pwStats.valid_count,
         pwStats.success_count
       );
       if (reduction_suppressed_reason === null) {
@@ -436,8 +473,10 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
   // 全体集計: 成功 run のトークンのみ
   const srAll = records.filter((r) => r.mcp_key === "smallright");
   const pwAll = records.filter((r) => r.mcp_key === "playwright");
-  const srSuccess = srAll.filter((r) => r.success === true && r.is_error === false);
-  const pwSuccess = pwAll.filter((r) => r.success === true && r.is_error === false);
+  const srValid = srAll.filter(isValidRun);
+  const pwValid = pwAll.filter(isValidRun);
+  const srSuccess = srValid.filter((r) => r.success === true && r.is_error === false);
+  const pwSuccess = pwValid.filter((r) => r.success === true && r.is_error === false);
 
   const srMedian = medianOrNull(srSuccess.map(contextTokens));
   const pwMedian = medianOrNull(pwSuccess.map(contextTokens));
@@ -457,9 +496,9 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
     overallSuppressed = "成功 run が 0 件の MCP があるため算出不能";
   } else {
     overallSuppressed = reductionBlockedReason(
-      srAll.length,
+      srValid.length,
       srSuccess.length,
-      pwAll.length,
+      pwValid.length,
       pwSuccess.length
     );
     if (overallSuppressed === null) {
@@ -500,6 +539,10 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       smallright_success_runs: srSuccess.length,
       playwright_runs: pwAll.length,
       playwright_success_runs: pwSuccess.length,
+      smallright_valid_runs: srValid.length,
+      playwright_valid_runs: pwValid.length,
+      smallright_invalid_runs: srAll.length - srValid.length,
+      playwright_invalid_runs: pwAll.length - pwValid.length,
       reduction_suppressed_reason: overallSuppressed,
     },
   };
@@ -541,6 +584,23 @@ function cost(n: number | null): string {
   return `$${n.toFixed(4)}`;
 }
 
+/** 計測不成立だった run の内訳を列挙する（黙って除外しないため） */
+export function invalidRunLines(records: RunRecord[]): string[] {
+  const invalid = records.filter((r) => recordStatus(r) === "invalid");
+  if (invalid.length === 0) return [];
+
+  const lines = ["### 計測不成立 (invalid) の run", ""];
+  lines.push("| Scenario | MCP | Run | Reason | Attempts |");
+  lines.push("|----------|-----|-----|--------|----------|");
+  for (const r of invalid) {
+    lines.push(
+      `| ${r.scenario_name} | ${r.mcp_key} | ${r.run_index + 1} | ${r.invalid_reason ?? "unknown"} | ${r.attempts ?? 1} |`
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
 export function generateMarkdown(result: AggregatedResult): string {
   const { meta, comparisons, overall } = result;
 
@@ -559,7 +619,18 @@ export function generateMarkdown(result: AggregatedResult): string {
   lines.push(
     "> Δ columns show smallright relative to playwright as a **token/cost delta**: negative = smallright used less (good), positive = smallright used more."
   );
-  lines.push("> Completion rate is based on **all runs** (including errors).");
+  lines.push(
+    "> Completion rate is based on **valid runs only** (errors included, invalid runs excluded)."
+  );
+  lines.push(
+    "> **Invalid** runs are runs where the MCP under test was never exercised — its tools were not"
+  );
+  lines.push(
+    "> connected, or were connected but never called. Those runs measure nothing about the tool, so"
+  );
+  lines.push(
+    "> they are excluded from every metric and reported separately instead of counted as failures."
+  );
   lines.push("> Δ is reported as N/A when either MCP succeeded in fewer than half of its runs,");
   lines.push("> because comparing medians drawn from unevenly filtered populations is misleading.");
   lines.push("");
@@ -603,10 +674,10 @@ export function generateMarkdown(result: AggregatedResult): string {
   lines.push("## Detailed Stats");
   lines.push("");
   lines.push(
-    "| Scenario | MCP | Runs | Success | Completion | Median context | Min | Max | Median billable | Median total | Median input | Median output | Median turns | Median cost (USD) |"
+    "| Scenario | MCP | Runs | Valid | Invalid | Success | Completion | Median context | Min | Max | Median billable | Median total | Median input | Median output | Median turns | Median cost (USD) |"
   );
   lines.push(
-    "|----------|-----|------|---------|------------|----------------|-----|-----|-----------------|-------------|-------------|--------------|-------------|------------------|"
+    "|----------|-----|------|-------|---------|---------|------------|----------------|-----|-----|-----------------|-------------|-------------|--------------|-------------|------------------|"
   );
 
   for (const cmp of comparisons) {
@@ -614,7 +685,7 @@ export function generateMarkdown(result: AggregatedResult): string {
       if (!st) continue;
       const medTurns = st.num_turns.median;
       lines.push(
-        `| ${st.scenario_name} | ${st.mcp_key} | ${st.count} | ${st.success_count} | ${rate(st.completion_rate)} | ${tok(st.context_tokens.median)} | ${tok(st.context_tokens.min)} | ${tok(st.context_tokens.max)} | ${tok(st.billable_tokens.median)} | ${tok(st.total_tokens.median)} | ${tok(st.input_tokens.median)} | ${tok(st.output_tokens.median)} | ${medTurns !== null ? medTurns.toFixed(1) : "N/A"} | ${st.cost_usd.median !== null ? `$${st.cost_usd.median.toFixed(4)}` : "N/A"} |`
+        `| ${st.scenario_name} | ${st.mcp_key} | ${st.count} | ${st.valid_count} | ${st.invalid_count} | ${st.success_count} | ${rate(st.completion_rate)} | ${tok(st.context_tokens.median)} | ${tok(st.context_tokens.min)} | ${tok(st.context_tokens.max)} | ${tok(st.billable_tokens.median)} | ${tok(st.total_tokens.median)} | ${tok(st.input_tokens.median)} | ${tok(st.output_tokens.median)} | ${medTurns !== null ? medTurns.toFixed(1) : "N/A"} | ${st.cost_usd.median !== null ? `$${st.cost_usd.median.toFixed(4)}` : "N/A"} |`
       );
     }
   }
@@ -624,20 +695,40 @@ export function generateMarkdown(result: AggregatedResult): string {
   // 総合表
   lines.push("## Overall Summary");
   lines.push("");
-  lines.push("Medians across all scenarios, successful runs only.");
-  lines.push("");
-  lines.push("| MCP | Median context | Median billable | Median total | Median cost | Successful runs |");
-  lines.push("|-----|----------------|-----------------|--------------|-------------|-----------------|");
   lines.push(
-    `| smallright | ${tok(overall.smallright_median_context_tokens)} | ${tok(overall.smallright_median_billable_tokens)} | ${tok(overall.smallright_median_total_tokens)} | ${cost(overall.smallright_median_cost_usd)} | ${overall.smallright_success_runs} / ${overall.smallright_runs} |`
-  );
-  lines.push(
-    `| playwright | ${tok(overall.playwright_median_context_tokens)} | ${tok(overall.playwright_median_billable_tokens)} | ${tok(overall.playwright_median_total_tokens)} | ${cost(overall.playwright_median_cost_usd)} | ${overall.playwright_success_runs} / ${overall.playwright_runs} |`
-  );
-  lines.push(
-    `| **Δ (smallright vs playwright)** | **${pct(overall.overall_token_reduction_pct)}** | **${pct(overall.overall_billable_reduction_pct)}** | | **${pct(overall.overall_cost_reduction_pct)}** | |`
+    "Medians across all scenarios, successful runs only. Successful runs は計測が成立した run が母数。"
   );
   lines.push("");
+  lines.push(
+    "| MCP | Median context | Median billable | Median total | Median cost | Successful runs | Invalid runs |"
+  );
+  lines.push(
+    "|-----|----------------|-----------------|--------------|-------------|-----------------|--------------|"
+  );
+  lines.push(
+    `| smallright | ${tok(overall.smallright_median_context_tokens)} | ${tok(overall.smallright_median_billable_tokens)} | ${tok(overall.smallright_median_total_tokens)} | ${cost(overall.smallright_median_cost_usd)} | ${overall.smallright_success_runs} / ${overall.smallright_valid_runs} | ${overall.smallright_invalid_runs} |`
+  );
+  lines.push(
+    `| playwright | ${tok(overall.playwright_median_context_tokens)} | ${tok(overall.playwright_median_billable_tokens)} | ${tok(overall.playwright_median_total_tokens)} | ${cost(overall.playwright_median_cost_usd)} | ${overall.playwright_success_runs} / ${overall.playwright_valid_runs} | ${overall.playwright_invalid_runs} |`
+  );
+  lines.push(
+    `| **Δ (smallright vs playwright)** | **${pct(overall.overall_token_reduction_pct)}** | **${pct(overall.overall_billable_reduction_pct)}** | | **${pct(overall.overall_cost_reduction_pct)}** | | |`
+  );
+  lines.push("");
+
+  const invalidTotal = overall.smallright_invalid_runs + overall.playwright_invalid_runs;
+  if (invalidTotal > 0) {
+    lines.push(
+      `> ⚠ 計測不成立 (invalid) の run が ${invalidTotal} 件ありました` +
+        `（smallright ${overall.smallright_invalid_runs} / playwright ${overall.playwright_invalid_runs}）。`
+    );
+    lines.push(
+      "> 対象 MCP を一度も通っていない run です。集計からは除外していますが、件数が多い場合は"
+    );
+    lines.push("> MCP サーバーの起動が不安定な可能性があります。");
+    lines.push("");
+    lines.push(...invalidRunLines(result.records));
+  }
 
   if (overall.reduction_suppressed_reason !== null) {
     lines.push(`> ⚠ 削減率は算出していません: ${overall.reduction_suppressed_reason}`);
@@ -685,7 +776,7 @@ export function printSummary(result: AggregatedResult): void {
   const WIDTH = 100;
 
   console.log("\n========== BENCHMARK SUMMARY ==========");
-  console.log("(Medians: successful runs only. Completion rate: all runs.)");
+  console.log("(Medians: successful runs only. Completion rate: valid runs only.)");
   console.log("(Context = input + cache_creation + cache_read. Billable = cache-weighted.)");
   console.log(
     `${"Scenario".padEnd(32)} ${"SR context".padStart(12)} ${"PW context".padStart(12)} ${"Context".padStart(9)} ${"Billable".padStart(9)} ${"Cost".padStart(9)} ${"SR ok".padStart(6)} ${"PW ok".padStart(6)}`
@@ -705,10 +796,18 @@ export function printSummary(result: AggregatedResult): void {
 
   console.log("-".repeat(WIDTH));
   console.log(
-    `${"OVERALL (median across all)".padEnd(32)} ${tok(overall.smallright_median_context_tokens).padStart(12)} ${tok(overall.playwright_median_context_tokens).padStart(12)} ${pct(overall.overall_token_reduction_pct).padStart(9)} ${pct(overall.overall_billable_reduction_pct).padStart(9)} ${pct(overall.overall_cost_reduction_pct).padStart(9)} ${`${overall.smallright_success_runs}/${overall.smallright_runs}`.padStart(6)} ${`${overall.playwright_success_runs}/${overall.playwright_runs}`.padStart(6)}`
+    `${"OVERALL (median across all)".padEnd(32)} ${tok(overall.smallright_median_context_tokens).padStart(12)} ${tok(overall.playwright_median_context_tokens).padStart(12)} ${pct(overall.overall_token_reduction_pct).padStart(9)} ${pct(overall.overall_billable_reduction_pct).padStart(9)} ${pct(overall.overall_cost_reduction_pct).padStart(9)} ${`${overall.smallright_success_runs}/${overall.smallright_valid_runs}`.padStart(6)} ${`${overall.playwright_success_runs}/${overall.playwright_valid_runs}`.padStart(6)}`
   );
   console.log("=".repeat(WIDTH));
 
+  const invalidTotal = overall.smallright_invalid_runs + overall.playwright_invalid_runs;
+  if (invalidTotal > 0) {
+    console.log(
+      `WARNING: 計測不成立 (invalid) の run が ${invalidTotal} 件ありました` +
+        `（smallright ${overall.smallright_invalid_runs} / playwright ${overall.playwright_invalid_runs}）。` +
+        "対象 MCP を一度も通っていないため集計から除外しています。"
+    );
+  }
   if (overall.reduction_suppressed_reason !== null) {
     console.log(`WARNING: 削減率は算出していません: ${overall.reduction_suppressed_reason}`);
   }

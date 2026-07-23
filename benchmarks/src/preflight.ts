@@ -1,4 +1,5 @@
 import { runClaude } from "./claudeRunner.js";
+import { filterMcpTools } from "./runStatus.js";
 import type { McpTarget } from "./runner.js";
 
 /**
@@ -70,14 +71,23 @@ export async function preflightMcp(mcp: McpTarget, model: string): Promise<Prefl
       timeoutMs: PREFLIGHT_TIMEOUT_MS,
     });
 
-    last = result.is_error
-      ? {
-          mcp_key: mcp.key,
-          ok: false,
-          tool_count: 0,
-          reason: `事前チェックの実行に失敗: ${result.raw_error ?? "unknown error"}`,
-        }
-      : parsePreflight(result.result, mcp.key);
+    if (result.is_error) {
+      last = {
+        mcp_key: mcp.key,
+        ok: false,
+        tool_count: 0,
+        reason: `事前チェックの実行に失敗: ${result.raw_error ?? "unknown error"}`,
+      };
+    } else {
+      // stream-json の system/init に、その run で実際に接続されたツール一覧が
+      // 入っている。モデルの自己申告（回答テキスト）より確実なので優先する。
+      // 回答テキストのパースは、init が取れなかった場合のフォールバック。
+      const connected = filterMcpTools(result.mcp_tools_available, mcp.key);
+      last =
+        connected.length > 0
+          ? { mcp_key: mcp.key, ok: true, tool_count: connected.length, reason: null }
+          : parsePreflight(result.result, mcp.key);
+    }
 
     if (last.ok) return last;
   }

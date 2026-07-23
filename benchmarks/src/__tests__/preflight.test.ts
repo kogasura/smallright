@@ -128,9 +128,11 @@ describe("buildClaudeArgs", () => {
     expect(args.join(" ")).not.toContain("秘密のプロンプト");
   });
 
-  it("JSON 出力形式を指定する", () => {
+  it("stream-json 出力形式を指定する", () => {
+    // run 単位で MCP 接続とツール呼び出しを見るため NDJSON が必要
     const args = buildClaudeArgs(base, "/tmp/resolved.json");
     const i = args.indexOf("--output-format");
-    expect(args[i + 1]).toBe("json");
+    expect(args[i + 1]).toBe("stream-json");
+    expect(args).toContain("--verbose");
   });
 });
