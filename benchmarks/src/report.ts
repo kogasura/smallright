@@ -68,6 +68,40 @@ export function reductionRate(baseline: number, target: number): number {
   return ((baseline - target) / baseline) * 100;
 }
 
+/**
+ * 複数シナリオの削減率を1つに集約する。
+ *
+ * 全 run を1つのプールに混ぜて中央値を取る方法は使えない。シナリオごとに
+ * トークン量の桁が違うため、プールの中央値は「中央に位置するシナリオの値」
+ * とほぼ一致してしまい、他のシナリオが結果に反映されない。部分集合の結果を
+ * 全体の指標として提示することになる。
+ *
+ * 比率の集約には幾何平均を用いる（Fleming & Wallace, CACM 29(3), 1986）。
+ * 算術平均は比率に対して正しい集約ではない。
+ *
+ * 全シナリオを等しい重みで扱う。これは「どのシナリオも同じだけ重要」という
+ * 仮定であり、実際のワークロード構成を反映したものではない。報告時には
+ * この仮定を明記すること。
+ *
+ * @param pairs シナリオごとの (baseline, target) の組
+ * @returns 削減率 (%)。算出できない場合は null
+ */
+export function aggregateReductionPct(
+  pairs: Array<{ baseline: number | null; target: number | null }>
+): number | null {
+  const ratios = pairs
+    .filter(
+      (p): p is { baseline: number; target: number } =>
+        p.baseline !== null && p.target !== null && p.baseline > 0 && p.target > 0
+    )
+    .map((p) => p.target / p.baseline);
+  if (ratios.length === 0) return null;
+
+  // 対数空間で平均を取る（積のオーバーフローを避ける）
+  const logMean = ratios.reduce((acc, r) => acc + Math.log(r), 0) / ratios.length;
+  return (1 - Math.exp(logMean)) * 100;
+}
+
 // ---------------------------------------------------------------------------
 // トークン指標
 //
@@ -502,12 +536,23 @@ export function aggregate(records: RunRecord[], model: string): AggregatedResult
       pwSuccess.length
     );
     if (overallSuppressed === null) {
-      overallReduction = reductionRate(pwMedian, srMedian);
-      if (srBillable !== null && pwBillable !== null) {
-        overallBillableReduction = reductionRate(pwBillable, srBillable);
-      }
-      if (srCost !== null && pwCost !== null) {
-        overallCostReduction = reductionRate(pwCost, srCost);
+      // 全 run をプールした中央値ではなく、シナリオ別の比率を幾何平均で集約する。
+      // 理由と前提は aggregateReductionPct のコメントを参照。
+      const usable = comparisons.filter(
+        (c) =>
+          c.reduction_suppressed_reason === null && c.smallright !== null && c.playwright !== null
+      );
+      const pairsOf = (pick: (st: ScenarioMcpStats) => number | null) =>
+        usable.map((c) => ({
+          baseline: pick(c.playwright as ScenarioMcpStats),
+          target: pick(c.smallright as ScenarioMcpStats),
+        }));
+
+      overallReduction = aggregateReductionPct(pairsOf((st) => st.context_tokens.median));
+      overallBillableReduction = aggregateReductionPct(pairsOf((st) => st.billable_tokens.median));
+      overallCostReduction = aggregateReductionPct(pairsOf((st) => st.cost_usd.median));
+      if (usable.length < comparisons.length) {
+        overallSuppressed = null; // 集約自体は可能。除外内訳はレポート側で明記する
       }
     }
   }
@@ -697,6 +742,19 @@ export function generateMarkdown(result: AggregatedResult): string {
   lines.push("");
   lines.push(
     "Medians across all scenarios, successful runs only. Successful runs は計測が成立した run が母数。"
+  );
+  lines.push("");
+  lines.push(
+    "> **Δ の集約方法**: シナリオごとの削減率を**幾何平均**で集約しています" +
+      "（比率の集約に算術平均を使うのは誤り。Fleming & Wallace, CACM 29(3), 1986）。"
+  );
+  lines.push(
+    "> 全シナリオを**等しい重み**で扱っており、これは「どのシナリオも同じだけ重要」という仮定です。" +
+      "実際のワークロード構成を反映したものではありません。"
+  );
+  lines.push(
+    "> 各 MCP の Median 列は全 run をプールした中央値であり、シナリオごとにトークン量の桁が違うため" +
+      "**代表値としては読めません**（参考値）。シナリオ別の値は上の表を参照してください。"
   );
   lines.push("");
   lines.push(
